@@ -1,0 +1,18 @@
+{
+  "title": "Combat Intelligence AI Fixed",
+  "type": "npc",
+  "tags": [
+    "fun",
+    "realism"
+  ],
+  "ignore": [
+    "*.psd",
+    "*.txt",
+    "_gma_meta.json",
+    ".git",
+    "thumb.jpg",
+    "addon.json",
+    "LICENSE"
+  ]
+}
+
