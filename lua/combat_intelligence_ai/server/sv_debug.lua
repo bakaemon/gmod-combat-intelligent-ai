@@ -40,6 +40,7 @@ timer.Create("CAI_DebugNet", 0.35, 0, function()
                     memE = table.Count(data.memory.enemies),
                     memD = #data.memory.dangers,
                     lod = data.lodInterval or 0,
+                    traits = data.personality and table.concat(data.personality.traits, "/") or "",
                 }
             end
         end
@@ -63,6 +64,7 @@ timer.Create("CAI_DebugNet", 0.35, 0, function()
                 net.WriteUInt(math.min(r.memE, 15), 4)
                 net.WriteUInt(math.min(r.memD, 15), 4)
                 net.WriteFloat(r.lod)
+                net.WriteString(r.traits)
             end
         net.Send(ply)
     end
