@@ -14,14 +14,9 @@ function BR.SetState(data, newState, reason)
     data.investFaced = nil
     data.stateSince = CurTime()
     if reason then data.lastDecision = reason end
-    -- FIX (bug 2): clear stale movement state on every transition so
-    -- the incoming state's Exec starts with a clean nav slate.
     data.moveTarget = nil
     data.moveIssuedAt = nil
     data.patrolTarget = nil
-    -- FIX (bug 2): reset the patrol cooldown so a brief PATROL→X→PATROL
-    -- round-trip doesn't immediately re-issue a patrol walk on the very
-    -- next tick.
     if newState ~= CAI.STATE.PATROL then
         data.patrolAt = CurTime()
     end
@@ -63,7 +58,6 @@ local function Perceive(data)
     local engineEnemy = npc.GetEnemy and npc:GetEnemy()
     if IsValid(engineEnemy) and CAI.Util.IsTargetable(engineEnemy) then
         if CAI.Util.Sees(npc, engineEnemy) then
-            -- Full sight contact: write precise position and update weapon info
             local firstContact = data.memory.enemies[engineEnemy] == nil
             CAI.Memory.SeeEnemy(data, engineEnemy, engineEnemy:GetPos())
             CAI.WeaponIntel.Update(data, engineEnemy)
@@ -78,12 +72,6 @@ local function Perceive(data)
                 end
             end
         else
-            -- FIX (bug 1): Valve's engine has already acquired this enemy
-            -- (via sound/proximity/damage) even though our LOS trace hasn't
-            -- cleared yet.  Write it as a heard contact so Target.Evaluate
-            -- returns a valid enemy and Decide() doesn't fall through to
-            -- PATROL.  Only do this when memory is completely cold for this
-            -- enemy so we don't overwrite a recent precise sighting.
             local rec = data.memory.enemies[engineEnemy]
             if not rec or (rec.heardOnly and CurTime() - rec.t > 1.0) then
                 CAI.Memory.HearEnemy(data, engineEnemy, engineEnemy:GetPos())
@@ -306,10 +294,6 @@ local function Decide(data)
 
             data.coverBounces = data.coverBounces or 0
             if data.state ~= CAI.STATE.COVER then data.lastEngageAt = CurTime() end
-            -- FIX (bug 4): coverBounces only increments when cover IS found,
-            -- so in open space it never reaches 3.  Also count time spent in
-            -- COVER with no position found as "starved" so the ENGAGE escape
-            -- fires even when FindBest has never succeeded.
             local coverStuck = data.state == CAI.STATE.COVER and (data.coverSearchFailures or 0) >= 2
             local starved = CurTime() - (data.lastEngageAt or CurTime()) > 6
                          or data.coverBounces >= 3
@@ -459,17 +443,9 @@ Exec[1] = function(data)
         if math.random() < 0.03 then CAI.Voice.Speak(data, "idle") end
         return
     end
-    -- FIX (bug 5): don't fire a new patrol move if the NPC is already
-    -- walking somewhere; wait until it arrives first.  This prevents the
-    -- patrolAt timer from immediately re-issuing a new destination while the
-    -- previous walk is still in progress, which caused the jittery
-    -- self-interruption the user observed.
     if data.moveTarget then
         if CAI.Nav.Arrived(data, 80) then
-            -- arrived: fall through to pick the next point
         elseif npc.IsCurrentSchedule and npc:IsCurrentSchedule(SCHED_IDLE_STAND) then
-            -- engine finished/failed the walk without arriving: drop the stale
-            -- target so we choose a fresh one instead of freezing in place
             data.moveTarget = nil
         else
             return
@@ -839,11 +815,6 @@ Exec[3] = function(data)
             CAI.Nav.MoveTo(data, pos, "run")
             if math.random() < 0.25 then CAI.Voice.Speak(data, "cover_me") end
         else
-            -- FIX (bug 3): track consecutive cover-search failures.
-            -- In open spaces FindBest always returns nil, so the NPC
-            -- loops forever oscillating between no-op and
-            -- SCHED_TAKE_COVER_FROM_ENEMY.  After enough failed attempts,
-            -- give up on cover and engage directly.
             data.coverSearchFailures = (data.coverSearchFailures or 0) + 1
             if data.coverSearchFailures >= 4 then
                 data.coverSearchFailures = 0
