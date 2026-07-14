@@ -1,6 +1,6 @@
 # AGENT.md: Combat Intelligence AI (CIA-gmod)
 
-Guidance for AI agents navigating and modifying this Garry's Mod addon.
+Guidance for navigating, building, and modifying this Garry's Mod addon.
 
 ## What this project is
 
@@ -48,11 +48,9 @@ lua/combat_intelligence_ai/
     sv_*.lua                     One file per subsystem (memory, squad, cover, flank, ...).
   client/                        Debug overlay (cl_debug) + settings UI.
 build/                           GENERATED. Do NOT hand-edit.
-  src/                           Mirror of lua/ (written by sync_addon.sh).
+  src/                           Mirror of lua/ (populated by the local build step).
   output/combat_intelligence_ai.gma   Workshop package (written by gma_tool).
 addon.json                       Workshop metadata. `ignore` list governs what ships.
-sync_addon.sh                    Build: luac check -> repack GMA -> rsync lua/ into build/src.
-publish.sh                       Upload build/src to the Steam Workshop (item 3760260083).
 ```
 
 ## Core architecture
@@ -112,20 +110,12 @@ publish.sh                       Upload build/src to the Steam Workshop (item 37
 - **NPC validity:** use `CAI.Util.Alive(ent)` / `CAI.Util.IsTargetable(ent)`
   before acting on entities.
 
-## Build & release workflow
+## Build & release
 
-These scripts have **machine-specific hardcoded paths** (notably
-`GMOD_ROOT=/mnt/big/SteamLibrary/steamapps/common/GarrysMod` in `sync_addon.sh`
-and the Workshop item id `3760260083` in both scripts).
-
-- `./sync_addon.sh`: (1) `luac -p` syntax-checks every file under `lua/`;
-  (2) repacks `build/src/` into `build/output/combat_intelligence_ai.gma` via
-  `gma_tool`, (3) rsyncs `lua/` into `build/src/lua/` so a running/extracted
-  copy picks up changes. Requires `gma_tool` and optional `luac5.1`.
-- `./publish.sh "[changelog]"`: runs `sync_addon.sh` then `gmpublish update`
-  to the Workshop. Requires Steam running and logged in.
-- **Version bump:** edit `CAI.Version` and `CAI.Build` in `cai_init.lua` (both
-  scripts grep the version string). Repack ships the new version automatically.
+Build and Workshop-publish tooling is environment-specific and intentionally
+kept out of this repository (the helper scripts are private). Each contributor
+sets up their own `luac` / `gma_tool` / `gmpublish` workflow for their local
+setup. The shippable addon is just the `lua/` tree plus `addon.json`.
 
 ## In-game testing & debugging
 
