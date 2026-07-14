@@ -36,8 +36,7 @@ local MAX_QUEUE = 128
 CAI.SafeHook("EntityFireBullets", "CAI_Suppression", CAI.Prof.Wrap("supp_fire_block", function(shooter, info)
     if not CAI.Enabled() then return end
     if not IsValid(shooter) then return end
-    if not (shooter:IsNPC() and CAI.Manager.Get(shooter)) then return end
-    if info then
+    if shooter:IsNPC() and CAI.Manager.Get(shooter) and info then
         local src = info.Src
         local dir = info.Dir
         local dist = info.Distance or 8000
@@ -57,6 +56,7 @@ CAI.SafeHook("EntityFireBullets", "CAI_Suppression", CAI.Prof.Wrap("supp_fire_bl
             end
         end
     end
+    if not info then return end
     if not CAI.CVBool("cai_suppression") then return end
     if #shotQueue >= MAX_QUEUE then return end
     local now = CurTime()
