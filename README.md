@@ -1,5 +1,3 @@
-# gmod-combat-intelligent-ai
-=======
 ![](https://i.imgur.com/dxfKyZK.png)
 
 # The smartest NPC AI system ever created in Garry's Mod
