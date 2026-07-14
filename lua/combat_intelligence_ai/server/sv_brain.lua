@@ -12,6 +12,7 @@ function BR.SetState(data, newState, reason)
     data.suppFaced = nil
     data.fleeSched = nil
     data.investFaced = nil
+    data.retreatDest = nil
     data.stateSince = CurTime()
     if reason then data.lastDecision = reason end
     data.moveTarget = nil
@@ -546,7 +547,8 @@ Exec[2] = function(data)
     local dangerAvoid = CAI.CVBool("cai_danger_avoid")
     local function safeDest(p)
         if not dangerAvoid or not p then return true end
-        if CAI.Util.Sees(npc, enemy) then return true end
+        local e = npc:GetEnemy()
+        if IsValid(e) and CAI.Util.Sees(npc, e) then return true end
         return not CAI.Memory.AvoidPos(data, p, CAI.Config.SelfPreserve.DangerAvoid.AdvanceIntoRadius)
     end
 
@@ -1136,19 +1138,26 @@ Exec[7] = function(data)
         return
     end
 
-    if CurTime() - (data.retreatAt or 0) > 3 then
+    if not data.retreatDest or CAI.Nav.Arrived(data, 100) or CurTime() - (data.retreatAt or 0) > 5 then
         data.retreatAt = CurTime()
         local _, rec = CAI.Memory.FreshestEnemy(data)
         if rec then
-            local away = (npc:GetPos() - rec.pos); away.z = 0; away:Normalize()
-            local yaw = away:Angle().y
+            local threat = rec.pos
+            local spot = CAI.Cover.FindBest(data, nil, threat)
             local dest
-            for _, off in ipairs({ 0, 60, -60, 120 }) do
-                local dir = Angle(0, yaw + off, 0):Forward()
-                dest = CAI.Nav.RandomPointNear(npc:GetPos() + dir * 800, 400)
-                if dest then break end
+            if spot and spot:DistToSqr(threat) > 300 * 300 then
+                dest = spot
+            else
+                local away = (npc:GetPos() - threat); away.z = 0; away:Normalize()
+                local yaw = away:Angle().y
+                for _, off in ipairs({0,60,-60,120}) do
+                    local dir = Angle(0,yaw+off,0):Forward()
+                    dest = CAI.Nav.RandomPointNear(npc:GetPos() + dir * 800, 400)
+                    if dest then break end
+                end
+                dest = dest or CAI.Nav.SafeOffset(npc:GetPos(), away, 600) or npc:GetPos()
             end
-            dest = dest or CAI.Nav.SafeOffset(npc:GetPos(), away, 600) or npc:GetPos()
+            data.retreatDest = dest
             CAI.Nav.MoveTo(data, dest, "run")
         elseif not data.fleeSched then
             data.fleeSched = true
@@ -1464,7 +1473,7 @@ function BR.Think(data, dt)
 
     if CAI.CVBool("cai_npc_regen") and npc:Health() < npc:GetMaxHealth()
        and CurTime() - (data.lastHurtAt or 0) > 6 then
-        npc:SetHealth(math.min(npc:GetMaxHealth(), npc.Health() + 9 * dt))
+        npc:SetHealth(math.min(npc:GetMaxHealth(), npc:Health() + 9 * dt))
     end
 end
 
