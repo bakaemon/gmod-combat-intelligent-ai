@@ -842,7 +842,8 @@ Exec[3] = function(data)
     if data.lastDecision == "reloading_cover" then
         local wep = npc:GetActiveWeapon()
         if IsValid(wep) and wep.Clip1 and wep:Clip1() == 0 then
-            if CurTime() - (data.forceReloadAt or 0) > 2 then
+            local reloading = npc.IsCurrentSchedule and npc:IsCurrentSchedule(SCHED_RELOAD)
+            if not reloading and CurTime() - (data.forceReloadAt or 0) > 3.5 then
                 data.forceReloadAt = CurTime()
                 data.coverPhase = nil
                 data.moveTarget = nil
