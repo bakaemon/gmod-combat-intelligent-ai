@@ -7,11 +7,7 @@ Guidance for AI agents navigating and modifying this Garry's Mod addon.
 A Garry's Mod Lua addon ("Combat Intelligence AI") that replaces default NPC
 behavior with a smart combat brain: cover scoring, memory of last-seen
 positions, squads with roles, morale, suppression, flanking, sound/weapon
-recognition, voice lines, spatial mapping, and room clearing. ~6,100 lines
-across 32 Lua files.
-
-There is **no automated test suite**. Verification is done in-game
-(`cai_debug 1`) and via the `luac` syntax check run by `sync_addon.sh`.
+recognition, voice lines, spatial mapping, and room clearing.
 
 ## Single source of truth: the `CAI` global
 
@@ -41,7 +37,14 @@ lua/combat_intelligence_ai/
     sh_text.lua                  Localized strings.
   server/                        AI logic (server-only).
     sv_manager.lua               NPC registration + the per-tick scheduler.
-    sv_brain.lua                 The decision state machine (1471 lines, the core).
+    sv_brain.lua                 Thin LOADER for the brain, includes brain_func/* in order.
+    brain_func/                  The decision core, split into focused modules (all on CAI.Brain):
+      state.lua                   BR.SetState, BR.StopSuppressing, BR.Prefire
+      perceive.lua                BR.Perceive (senses / memory refresh)
+      sense.lua                   BR.CombatTarget, BR.MeleeThreatScan
+      decide.lua                  BR.Decide (priority cascade -> state + reason)
+      exec.lua                    BR.Exec[0..11] (per-state movement / firing handlers)
+      think.lua                   BR.Think (per-tick perceive -> decide -> execute loop)
     sv_*.lua                     One file per subsystem (memory, squad, cover, flank, ...).
   client/                        Debug overlay (cl_debug) + settings UI.
 build/                           GENERATED. Do NOT hand-edit.
@@ -69,10 +72,15 @@ publish.sh                       Upload build/src to the Steam Workshop (item 37
   `CAI.Perf.GetThinkInterval(npc)` (distance-based LOD tiers in
   `CAI.Config.LOD`), divided by difficulty speed. Don't assume every NPC
   thinks every 0.05s.
-- **State machine.** `sv_brain.lua` is the decision core, driven by the
-  `CAI.STATE` enum (IDLE, PATROL, ENGAGE, COVER, FLANK, SUPPRESS, SEARCH,
-  RETREAT, INVESTIGATE, REGROUP, ROOM_CLEAR, BOUNDED). `CAI.Brain.SetState`
-  transitions states. Subsystem modules are invoked from within the brain.
+- **State machine.** The brain decision core lives in `server/brain_func/`,
+  loaded by `sv_brain.lua`. Each module populates `CAI.Brain` (aliased `BR`):
+  `Decide` (`decide.lua`) is a priority cascade returning `(state, reason)`,
+  `Exec[state]` (`exec.lua`) runs the matching per-state handler, and `Think`
+  (`think.lua`) orchestrates the per-tick perceive -> decide -> execute loop.
+  States come from the `CAI.STATE` enum (IDLE, PATROL, ENGAGE, COVER, FLANK,
+  SUPPRESS, SEARCH, RETREAT, INVESTIGATE, REGROUP, ROOM_CLEAR, BOUNDED).
+  `CAI.Brain.SetState` transitions states, clearing transient per-state fields.
+  Subsystem modules are invoked from within the brain.
 - **Module loading.** `cai_init.lua` defines `Shared()`, `Server()`, `Client()`
   helpers and lists every file in load order. Shared files load first (config,
   convar, util, net, text), then server, then client.
@@ -84,6 +92,12 @@ publish.sh                       Upload build/src to the Steam Workshop (item 37
   never call `GetConVar` directly in subsystem code.
 - **Add a module:** create the file, then register it in `cai_init.lua` with
   `Server(...)`, `Client(...)`, or `Shared(...)` in the correct phase.
+- **Brain logic** lives in `server/brain_func/`; each file populates the
+  `CAI.Brain` table (aliased `BR`, e.g. `BR.X = function(data) ...` or
+  `BR.Exec[N] = function(data) ...`). `sv_brain.lua` only loads those files in
+  order, do not put decision logic directly in it. Cross-file brain calls must
+  go through `BR.*` (never a `local` function), since each sub-file is a
+  separate `include`.
 - **Hooks:** use `CAI.SafeHook(event, name, fn)` (defined in `sh_util.lua`),
   not raw `hook.Add`, so failures are caught and rate-limited.
 - **Tuning constants** belong in `sh_config.lua` under `CAI.Config.*`, do not
