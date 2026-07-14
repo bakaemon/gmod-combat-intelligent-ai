@@ -350,7 +350,9 @@ local function Decide(data)
                     data.investigateUntil = CurTime() + 6
                     return S.INVESTIGATE, "heard_close"
                 end
-                return S.COVER, "await_reacquire"
+                data.investigatePos = rec.pos
+                data.investigateUntil = CurTime() + 6
+                return S.INVESTIGATE, "reacquire_advance"
             end
             if data.search then return S.SEARCH, "search_in_progress" end
             if CAI.CVBool("cai_search") then
