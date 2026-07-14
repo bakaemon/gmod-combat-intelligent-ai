@@ -118,6 +118,7 @@ BR.Decide = function(data)
         if visible then
 
             data.search = nil
+            data.awaitAt = nil
 
             if data.flank then
                 if npc:GetPos():DistToSqr(enemy:GetPos()) < 600 * 600 then
@@ -226,7 +227,17 @@ BR.Decide = function(data)
                 data.investigateUntil = CurTime() + 6
                 return S.INVESTIGATE, "reacquire_advance"
             end
-            if data.search then return S.SEARCH, "search_in_progress" end
+
+            -- Lost the enemy longer than patience: stop camping on a stale
+            -- last-known position. Search, after a short grace window so a
+            -- momentary miss does not thrash into SEARCH every tick.
+            if data.search then
+                return S.SEARCH, "search_in_progress"
+            end
+            if (CurTime() - (data.awaitAt or 0)) < 3 and not CAI.CVBool("cai_search") then
+                data.awaitAt = data.awaitAt or CurTime()
+                return S.COVER, "await_reacquire"
+            end
             if CAI.CVBool("cai_search") then
                 return S.SEARCH, "enemy_vanished"
             end

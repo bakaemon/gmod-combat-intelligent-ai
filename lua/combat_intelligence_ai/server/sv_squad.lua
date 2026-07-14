@@ -264,6 +264,7 @@ function SQ.Plan(squad)
     local now = CurTime()
     if now - squad.lastPlan < CAI.Config.Plan.Interval then return end
     squad.lastPlan = now
+    local aggro = CAI.CVNum("cai_aggression")
 
     CAI.Battlefield.Prune(squad)
     SQ.AssignRoles(squad)
@@ -303,7 +304,8 @@ function SQ.Plan(squad)
         squad.plan = "hold"
     elseif inCombat and #squad.members >= enemies * cfg.PushAdvantage and withLOS > 0 then
         squad.plan = "push"
-    elseif inCombat and #squad.members >= cfg.FlankMinMembers and CAI.CVBool("cai_flanking") then
+    elseif inCombat and CAI.CVBool("cai_flanking")
+           and #squad.members >= (aggro >= CAI.Config.Flank.AggressiveAt and 2 or cfg.FlankMinMembers) then
         squad.plan = "flank"
     elseif inCombat then
         squad.plan = "hold"
@@ -335,11 +337,20 @@ function SQ.Plan(squad)
         if d then
             d.squadPlan = squad.plan
             if d.role == CAI.ROLE.SUPPRESSOR and (squad.plan == "push" or squad.plan == "flank" or squad.plan == "hold") then
-                d.suppressUntil = math.max(d.suppressUntil or 0, now + cfg.Interval * 2)
+                if not d.suppressUntil or now > d.suppressUntil then
+                    d.suppressStarted = now
+                end
+                if not d.suppressStarted or now - d.suppressStarted < 12 then
+                    d.suppressUntil = math.max(d.suppressUntil or 0, now + cfg.Interval * 2)
+                end
             elseif (squad.plan == "flank" or squad.plan == "push") and d.role == CAI.ROLE.FLANKER then
                 if not d.lastFlankAt or now - d.lastFlankAt > 15 then
                     d.wantFlank = true
                 end
+            elseif squad.plan == "flank" and aggro >= CAI.Config.Flank.AggressiveAt
+                   and d.role ~= CAI.ROLE.FLANKER and d.ent ~= squad.leader
+                   and (not d.lastFlankAt or now - d.lastFlankAt > 15) then
+                d.wantFlank = true
             end
             if d.role == CAI.ROLE.GRENADIER or d.role == CAI.ROLE.LEADER then
                 pcall(function() d.ent:SetSaveValue("m_iNumGrenades", 3) end)

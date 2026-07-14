@@ -115,6 +115,22 @@ end
 -- fighting, aggressive push/creep, kiting, and backing off when too close.
 BR.Exec[2] = function(data)
     local npc = data.ent
+    local moveShoot = CAI.CVBool("cai_move_shoot") and not CAI.CVBool("cai_performance_mode")
+    local function tryMoveShoot()
+        if not moveShoot then return false end
+        if data.squad then
+            local idx = 0
+            for i, m in ipairs(data.squad.members) do
+                if m == npc then idx = i break end
+            end
+            local maxMS = math.max(1, math.floor(#data.squad.members * CAI.Config.SquadTactics.MoveShootFraction))
+            if idx == 0 or idx > maxMS then return false end
+        end
+        data.fighting = nil
+        data.moveTarget = nil
+        npc:SetSchedule(SCHED_CHASE_ENEMY)
+        return true
+    end
     local dangerAvoid = CAI.CVBool("cai_danger_avoid")
     -- safeDest: skip danger-avoidance when we can actually see the enemy
     -- (advancing into a known kill zone is fine if we have eyes on target).
@@ -209,6 +225,11 @@ BR.Exec[2] = function(data)
         return
     end
 
+    if npc.IsCurrentSchedule and npc:IsCurrentSchedule(SCHED_CHASE_ENEMY) then
+        CAI.FriendlyFire.Update(data)
+        return
+    end
+
     local ideal = CAI.WeaponIntel.OwnIdeal(npc)
     local ownArch = CAI.WeaponIntel.OwnArch(npc)
     local maxRange = CAI.WeaponIntel.OwnRange(npc)
@@ -239,6 +260,7 @@ BR.Exec[2] = function(data)
                 data.pushAt = now
                 data.combatMoveAt = now
                 data.fighting = nil
+                if tryMoveShoot() then return end
                 local dir = enemy:GetPos() - npc:GetPos()
                 dir.z = 0 dir:Normalize()
                 local step = math.min(dist - creepRange, pcfg.BoundStep)
@@ -285,10 +307,12 @@ BR.Exec[2] = function(data)
         CAI.FriendlyFire.Update(data)
     end
 
-    -- In the weapon's ideal band with line of sight: hold position and
-    -- establish a line of fire (respecting squad fire-stagger so only some
-    -- shoot at once). This is the steady-state "gunfight" branch.
-    if dist >= ideal * 0.45 and dist <= maxRange and CAI.Util.Sees(npc, enemy) then
+    -- In the weapon's ideal band (or closer) with line of sight: hold position
+    -- and establish a line of fire (respecting squad fire-stagger so only some
+    -- shoot at once). This is the steady-state "gunfight" branch. The lower
+    -- bound is intentionally absent so a point-blank enemy is engaged in place
+    -- rather than backed away from.
+    if dist <= maxRange and CAI.Util.Sees(npc, enemy) then
         data.moveTarget = nil
         local firing = false
         if npc.IsCurrentSchedule then
@@ -322,7 +346,7 @@ BR.Exec[2] = function(data)
             data.fireAngleOffset = data.fireAngleOffset * 0.5
             if math.abs(data.fireAngleOffset) < 1 then data.fireAngleOffset = nil end
         end
-        if not data.fighting or (not firing and CurTime() - (data.fightSchedAt or 0) > 1.5) then
+        if not data.fighting or (not firing and CurTime() - (data.fightSchedAt or 0) > CAI.Config.Engage.RetryGap) then
             data.fighting = true
             data.fightSchedAt = CurTime()
             npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
@@ -330,8 +354,10 @@ BR.Exec[2] = function(data)
         return
     end
 
-    -- Too close: back off to reopen the ideal engagement distance.
-    if dist < ideal * 0.45 then
+    -- Too close but no line of sight: back off a touch to reopen a sightline.
+    -- When we can see the enemy this close we simply hold and fire (handled by
+    -- the steady-state branch above).
+    if dist < CAI.Config.Engage.PointBlank and not CAI.Util.Sees(npc, enemy) then
         if now - (data.backoffAt or 0) > 3 then
             data.backoffAt = now
             data.combatMoveAt = now
@@ -343,6 +369,7 @@ BR.Exec[2] = function(data)
     elseif ownArch == "shotgun" and dist > ideal and now - (data.pressAt or 0) > 3 then
         data.pressAt = now
         data.combatMoveAt = now
+        if tryMoveShoot() then return end
         local dir = enemy:GetPos() - npc:GetPos()
         dir.z = 0 dir:Normalize()
         local dest = CAI.Nav.SafeGround(enemy:GetPos() - dir * ideal * 0.6)
@@ -352,6 +379,7 @@ BR.Exec[2] = function(data)
             data.advanceAt = now
             data.combatMoveAt = now
             data.fighting = nil
+            if tryMoveShoot() then return end
             local dir = enemy:GetPos() - npc:GetPos()
             dir.z = 0 dir:Normalize()
             local step = math.min(dist - ideal, 400)
@@ -365,6 +393,7 @@ BR.Exec[2] = function(data)
     else
         if now - (data.advanceAt or 0) > 2 then
             data.advanceAt = now
+            if tryMoveShoot() then return end
             npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
         end
     end
@@ -493,15 +522,34 @@ end
 -- enemy from the side, resume ENGAGE when the flank completes.
 BR.Exec[4] = function(data)
     local npc = data.ent
+    local enemy, rec = CAI.Memory.FreshestEnemy(data)
+    -- Contact is inevitable: the enemy (or another one) is close enough that a
+    -- silent flank is pointless, so open fire and run-and-gun instead.
+    if IsValid(enemy) then
+        local contact = npc:GetPos():Distance(enemy:GetPos()) < CAI.Config.Flank.FireDist
+        if not contact then
+            local fireDistSq = CAI.Config.Flank.FireDist ^ 2
+            for e in pairs(data.memory.enemies) do
+                if IsValid(e) and e ~= enemy
+                   and npc:GetPos():DistToSqr(e:GetPos()) < fireDistSq then
+                    contact = true break
+                end
+            end
+        end
+        if contact then
+            data.flank = nil
+            if npc.SetEnemy then npc:SetEnemy(enemy) end
+            BR.SetState(data, CAI.STATE.ENGAGE, "flank_contact")
+            return
+        end
+    end
     if not data.flank then
-        local _, rec = CAI.Memory.FreshestEnemy(data)
         if not rec or not CAI.Flank.Begin(data, rec.pos) then
             BR.SetState(data, CAI.STATE.COVER, "flank_unavailable")
             return
         end
     end
     if not CAI.Flank.Update(data) then
-        local enemy, rec = CAI.Memory.FreshestEnemy(data)
         if IsValid(enemy) and npc.SetEnemy then npc:SetEnemy(enemy) end
         data.lastFlankAt = CurTime()
         BR.SetState(data, CAI.STATE.ENGAGE, "flank_complete")
@@ -552,6 +600,7 @@ BR.Exec[5] = function(data)
         if not data.suppNoLosAt then data.suppNoLosAt = now end
         if now - data.suppNoLosAt > 8 then
             BR.StopSuppressing(data)
+            data.suppressUntil = nil
             data.suppNoLosAt = nil
             CAI.Memory.SeeEnemy(data, enemy, rec.pos)
             BR.SetState(data, CAI.STATE.SEARCH, "suppress_no_los")
@@ -627,6 +676,7 @@ BR.Exec[5] = function(data)
     if not data.suppressUntil or CurTime() > data.suppressUntil then
         data.saidSuppress = false
         data.suppNoLosAt = nil
+        data.suppressUntil = nil
         BR.SetState(data, CAI.STATE.COVER, "suppress_done")
     end
 end

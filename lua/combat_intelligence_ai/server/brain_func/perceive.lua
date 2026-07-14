@@ -59,6 +59,30 @@ BR.Perceive = function(data)
         end
     end
 
+    -- Hard point-blank acquisition fallback: if we somehow have no enemy yet,
+    -- grab any hostile, non-spectator player within range that we can see. This
+    -- stops NPCs being "blind" to a target standing right in front of them.
+    if CurTime() - (data.pbScanAt or 0) > (CAI.Config.Perceive.PointBlankScan or 0.5) then
+        data.pbScanAt = CurTime()
+        local cur = npc.GetEnemy and npc:GetEnemy()
+        if not (IsValid(cur) and CAI.Util.IsTargetable(cur)) then
+            local self = npc
+            local best, bestD = nil, (CAI.Config.Perceive.PointBlankAcquire or 250) ^ 2
+            for _, ply in ipairs(player.GetAll()) do
+                if IsValid(ply) and ply ~= self and CAI.Util.IsTargetable(ply)
+                   and ply:Disposition(self) == D_HT and not ply:IsSpec() then
+                    local d = self:GetPos():DistToSqr(ply:GetPos())
+                    if d < bestD and CAI.Util.CanSee(self, ply) then
+                        best, bestD = ply, d
+                    end
+                end
+            end
+            if IsValid(best) then
+                CAI.Memory.SeeEnemy(data, best, best:GetPos())
+            end
+        end
+    end
+
     local wep = npc.GetActiveWeapon and npc:GetActiveWeapon()
     if IsValid(wep) and wep.Clip1 and wep:Clip1() == 0 and not data.saidReload then
         data.saidReload = true

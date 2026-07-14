@@ -63,6 +63,31 @@ C.LOD = {
 C.MaxBrainThinksPerTick = 12
 C.ManagerTickRate = 0.05
 
+C.Engage = {
+    -- Distance (u) under which a NPC with no line of sight backs off to regain
+    -- a sightline. With line of sight it simply holds and fires instead.
+    PointBlank = 120,
+    -- Minimum seconds between re-issuing the fire schedule (no schedule thrash).
+    RetryGap = 0.4,
+}
+
+C.Flank = {
+    -- cai_aggression at or above this lets any squad member peel off to flank a
+    -- hidden enemy. Below it, only a designated FLANKER flanks.
+    AggressiveAt = 0.7,
+    -- Distance (u) to the enemy (or any other enemy) at which a flank opens
+    -- fire and runs-and-guns instead of finishing the silent maneuver.
+    FireDist = 500,
+}
+
+C.Perceive = {
+    -- Distance (u) for the hard point-blank target-acquisition fallback: a
+    -- hostile player this close with line of sight is always noticed.
+    PointBlankAcquire = 250,
+    -- Throttle (s) for that scan so it is not run every think.
+    PointBlankScan = 0.5,
+}
+
 C.Cover = {
     SearchRadius = 1200,
     MinEnemyDist = 250,
@@ -109,12 +134,13 @@ C.Morale = {
 
 C.Suppression = {
     Radius = 140,
-    PerBullet = 9,
+    PerBullet = 14,
     Explosion = 45,
-    Decay = 14,
+    Decay = 9,
     Max = 100,
     PinnedAt = 55,
     PanicAt = 85,
+    FFMaxAllies = 4,
     AccuracyPenaltySteps = { [30] = 1, [60] = 2, [85] = 3 },
 }
 

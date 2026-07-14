@@ -103,3 +103,9 @@ function F.Update(data)
     end
     return true
 end
+
+-- True when the squad's aggression (cai_aggression) is high enough that any
+-- member may flank a hidden enemy, not just a designated FLANKER.
+function F.Aggressive(data)
+    return CAI.CVNum("cai_aggression") >= (CAI.Config.Flank.AggressiveAt or 0.7)
+end
