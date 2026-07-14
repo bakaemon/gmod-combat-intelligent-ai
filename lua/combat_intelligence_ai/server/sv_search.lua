@@ -135,6 +135,7 @@ function SE.Update(data)
     local function NextPoint()
         s.idx = s.idx + 1
         s.dwellEnd = 0
+        s.progressPos = nil
         if s.idx > #s.points then
             SE.Abandon(data, s)
             CAI.Voice.Speak(data, "enemy_lost")
@@ -146,10 +147,19 @@ function SE.Update(data)
     end
 
     if not CAI.Nav.Arrived(data, 90) then
-        if s.pointDeadline and CurTime() > s.pointDeadline then
+        local here = data.ent:GetPos()
+        if not s.progressPos then
+            s.progressPos = here
+            s.progressAt = CurTime()
+        elseif here:DistToSqr(s.progressPos) > 60 * 60 then
+            s.progressPos = here
+            s.progressAt = CurTime()
+        elseif CurTime() - (s.progressAt or 0) > 4 then
+            s.progressPos = nil
             return NextPoint()
         end
         return true
+
     end
 
     if s.dwellEnd == 0 then
