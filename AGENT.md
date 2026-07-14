@@ -110,13 +110,6 @@ addon.json                       Workshop metadata. `ignore` list governs what s
 - **NPC validity:** use `CAI.Util.Alive(ent)` / `CAI.Util.IsTargetable(ent)`
   before acting on entities.
 
-## Build & release
-
-Build and Workshop-publish tooling is environment-specific and intentionally
-kept out of this repository (the helper scripts are private). Each contributor
-sets up their own `luac` / `gma_tool` / `gmpublish` workflow for their local
-setup. The shippable addon is just the `lua/` tree plus `addon.json`.
-
 ## In-game testing & debugging
 
 - `cai_debug 1`: full debug overlay (admins), `cai_debug_rays 1` draws
