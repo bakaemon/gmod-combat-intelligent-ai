@@ -19,6 +19,7 @@ net.Receive(CAI.Net.Debug, function()
         r.memE = net.ReadUInt(4)
         r.memD = net.ReadUInt(4)
         r.lod = net.ReadFloat()
+        r.traits = net.ReadString()
         rows[#rows + 1] = r
     end
     rowsAt = CurTime()
@@ -63,6 +64,7 @@ hook.Add("HUDPaint", "CAI_DebugDraw", function()
                     { L.squad .. " " .. r.squad .. "  " .. L.plan .. " " .. r.plan, Color(180, 255, 180) },
                     { L.why .. " " .. why, Color(200, 200, 200) },
                     { L.memE .. r.memE .. L.memD .. r.memD .. "  " .. L.lod .. string.format("%.2fs", r.lod), Color(160, 160, 160) },
+                    { r.traits ~= "" and ("Traits: " .. r.traits) or "Traits: -", Color(255, 200, 120) },
                 }
                 for i, l in ipairs(lines) do
                     draw.SimpleText(l[1], "CAI_Debug", sp.x, sp.y + (i - 1) * 16,
