@@ -177,5 +177,6 @@ Lifecycle and meta:
   the AI feels), touching upstream-only debug files (`sv_debug.lua` / `cl_debug.lua`)
   without a real need, or adding any `build/` / `*.sh` references to the repo.
 - Never: commit secrets or keys, reference the private build/publish scripts in repo
-  docs, edit gitignored `*.sh` or `build/`, introduce em/en dashes, or make `Decide`
-  perform movement.
+  docs, edit gitignored `*.sh` or `build/`, introduce em/en dashes, make `Decide`
+  perform movement, or **push to `origin`** (commit locally all you like, but only
+  push when the user explicitly asks).
