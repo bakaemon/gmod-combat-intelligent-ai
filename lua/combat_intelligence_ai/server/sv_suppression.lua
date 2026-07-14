@@ -85,7 +85,8 @@ local function ProcessShot(shot)
 
     for npc, data in pairs(CAI.Manager.All()) do
         if IsValid(npc) and npc ~= shooter
-           and npc:Disposition(shooter) == D_HT then
+           and npc:Disposition(shooter) ~= D_LI
+           and npc:Disposition(shooter) ~= D_AL then
 
             if npc:GetPos():DistToSqr(src) < 3000 * 3000 then
                 local d = CAI.Util.PointSegmentDist(npc:GetPos() + Vector(0,0,40), src, dst)
