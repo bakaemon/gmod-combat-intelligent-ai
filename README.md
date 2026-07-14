@@ -13,6 +13,19 @@
 - **Formations & room clearing** - Basically ready or not kinda
 - **Personalities** - every NPC rolls traits so they all fight differently.
 - **Voice lines** - They actually give communications to each other.
+- **Battle Awareness** - pinned NPCs call for help, allies respond to nearby gunfire and regroup with their squad
+- **Engagement & Range** - weapon-appropriate engagement distances, no suicidal charges, shoot on sight
+- **Melee Defense** - backpedal while firing when swarmed, bail out when overwhelmed or dry
+- **Spatial Mapping** - NPCs learn chokepoints, high ground, and flank routes to fight smarter
+- **Adaptive CQB** - real doorway slicing, short rushes, shoot-move-reposition
+- **Squad Tactics** - fire and maneuver, staggered fire, adaptive formations, reload cover
+- **Self-Preservation** - avoid kill zones, hold angles on unknowns, guaranteed suppression, realistic corner pushes
+- **Flanking Overhaul** - covered routes, commit to attacking on arrival, squad pins while one flanks
+- **Cover Improvements** - judged on escape routes and high ground, varied peek angles, hold fire when you're exposed
+- **Search Improvements** - favor chokepoints and high ground, fresh sounds redirect the hunt
+- **Friendly Fire** - won't shoot through squadmates, blocked shooter calls it and teammate steps aside
+- **Suppression** - stay grouped, go hunting if target is lost too long, suppressors hold position
+- **Smarter Patrol** - sweep the map, avoid recent ground, favor map features, never freeze
 - **Performance** - This can work with 100+ NPCs no issues
 
 ## Console
