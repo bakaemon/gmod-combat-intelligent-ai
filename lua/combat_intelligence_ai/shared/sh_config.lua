@@ -69,6 +69,9 @@ C.Engage = {
     PointBlank = 120,
     -- Minimum seconds between re-issuing the fire schedule (no schedule thrash).
     RetryGap = 0.4,
+    -- Distance (u) within which a known enemy (fresh memory, no clean LOS) is
+    -- still engaged as a CQB push instead of falling to INVESTIGATE/SEARCH.
+    BlindPushRange = 1000,
 }
 
 C.Flank = {
@@ -78,6 +81,29 @@ C.Flank = {
     -- Distance (u) to the enemy (or any other enemy) at which a flank opens
     -- fire and runs-and-guns instead of finishing the silent maneuver.
     FireDist = 500,
+    -- Seconds: maximum age of rec.t (last known enemy position) to START a flank.
+    -- Checked only at initiation, not mid-flank, because rec.t ages during a
+    -- blind (no live LOS) flank.
+    FreshWindow = 8,
+    -- Lateral offset (u) from rec.pos at which we aim to reach the enemy's SIDE
+    -- (the flank/attack point). This is the heart of a flank: get off the enemy's
+    -- front, not sneak up to it.
+    FlankOffset = 400,
+    -- navPt snap reject radius (u): a snapped nav point further than this from the
+    -- intended offset is rejected, so routing stays in-space instead of collapsing
+    -- onto whatever cover happens to be near the NPC.
+    MaxSnap = 250,
+    -- Waypoint lateral-bow cap (u).
+    MaxBow = 500,
+    -- Waypoint forward-term cap (u).
+    ForwardCap = 600,
+    -- Waypoint forward fraction of the NPC->attackPos vector.
+    WaypointFrac = 0.5,
+    -- Waypoint side bias (u).
+    BowOffset = 300,
+    -- Envelope (u): the waypoint must stay within this of the NPC, so it cannot
+    -- route the NPC back across the enemy.
+    WaypointMax = 900,
 }
 
 C.Perceive = {
@@ -140,14 +166,40 @@ C.Suppression = {
     Max = 100,
     PinnedAt = 55,
     PanicAt = 85,
+    FightOpenAggro = 0.5,
+    FightOpenSpread = 0.25,
     FFMaxAllies = 4,
     HurtGraceMin = 1.0,
     HurtGraceMax = 3.0,
-    HurtEvadeDist = 300,
     HurtCoverCdMin = 1.5,
     HurtCoverCdMax = 8.0,
     HurtExposeCd = 0.6,
     AccuracyPenaltySteps = { [30] = 1, [60] = 2, [85] = 3 },
+}
+
+C.Flinch = {
+    -- Jink step distance (u) used for the defensive reposition.
+    JinkDistMin = 120,
+    JinkDistMax = 300,
+    -- How often the jink destination is re-planned (anti-thrash; throttles the
+    -- cover search). Kept short so the maneuver reads as a semi-random weave.
+    JinkReplanMin = 0.3,
+    JinkReplanMax = 0.7,
+    -- Max lateral deviation (deg) applied to the plan's intended direction.
+    JinkAngleMax = 60,
+    -- Fraction a plan-moving NPC's destination is nudged toward nearby cover.
+    CoverLean = 0.25,
+    -- Burst/run cycle for an injected reposition: walk (return distracting
+    -- fire) then run (reposition), bounded by the hurt-grace window so return
+    -- fire is never indefinite.
+    BurstMin = 0.5,
+    BurstMax = 1.0,
+    RunMin = 0.4,
+    RunMax = 0.8,
+    -- Suppression level (0..100) at/above which the NPC counts as "being shot
+    -- at" and the flinch rule engages. Below a single hit's +18, so a lone
+    -- glancing hit still triggers a flinch.
+    UnderFireAt = 10,
 }
 
 C.WeaponPatterns = {
@@ -497,7 +549,7 @@ C.Plan = {
     PushAdvantage = 1.6,
 }
 
-C.LastVisGrace = 1.0
+C.LastVisGrace = 2.5
 
 C.SpatialMap = {
     ScanInterval = 5.0,

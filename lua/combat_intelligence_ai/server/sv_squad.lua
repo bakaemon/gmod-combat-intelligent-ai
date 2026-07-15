@@ -158,7 +158,11 @@ function SQ.OnComm(data, event, sender, payload)
     elseif event == "need_help" and payload then
         if data.state ~= CAI.STATE.ENGAGE and data.state ~= CAI.STATE.RETREAT then
             data.reinforceTarget = payload.pos
-            CAI.Brain.SetState(data, CAI.STATE.REGROUP, "help_request")
+            -- A live flanker is mid-maneuver; do not yank it to REGROUP or the
+            -- flank collapses. Record the request but leave its state alone.
+            if not data.flank then
+                CAI.Brain.SetState(data, CAI.STATE.REGROUP, "help_request")
+            end
         end
     elseif event == "suppression_active" and payload then
         if data.role == CAI.ROLE.SUPPRESSOR and data.state == CAI.STATE.SUPPRESS then
@@ -332,6 +336,18 @@ function SQ.Plan(squad)
         end
     end
 
+    local maxFlankers = math.max(1, math.floor(#squad.members * 0.5))
+    local flankCount = 0
+    local function SQ_AwayFromLOS(d)
+        local npc = d.ent
+        if not IsValid(npc) then return true end
+        local pos = npc:GetPos()
+        for e in pairs(d.memory.enemies or {}) do
+            if IsValid(e) and CAI.Util.CanSeePos(e, pos) then return false end
+        end
+        return true
+    end
+
     for _, m in ipairs(squad.members) do
         local d = CAI.Manager.Get(m)
         if d then
@@ -346,11 +362,18 @@ function SQ.Plan(squad)
             elseif (squad.plan == "flank" or squad.plan == "push") and d.role == CAI.ROLE.FLANKER then
                 if not d.lastFlankAt or now - d.lastFlankAt > 15 then
                     d.wantFlank = true
+                    flankCount = flankCount + 1
                 end
-            elseif squad.plan == "flank" and aggro >= CAI.Config.Flank.AggressiveAt
+            elseif (squad.plan == "flank" or squad.plan == "push")
                    and d.role ~= CAI.ROLE.FLANKER and d.ent ~= squad.leader
-                   and (not d.lastFlankAt or now - d.lastFlankAt > 15) then
-                d.wantFlank = true
+                   and (not d.lastFlankAt or now - d.lastFlankAt > 15)
+                   and flankCount < maxFlankers then
+                local p = 0.15 + (d.personality.stats.aggression or 0) * 0.3
+                if SQ_AwayFromLOS(d) then p = p + 0.35 end
+                if math.random() < p then
+                    d.wantFlank = true
+                    flankCount = flankCount + 1
+                end
             end
             if d.role == CAI.ROLE.GRENADIER or d.role == CAI.ROLE.LEADER then
                 pcall(function() d.ent:SetSaveValue("m_iNumGrenades", 3) end)

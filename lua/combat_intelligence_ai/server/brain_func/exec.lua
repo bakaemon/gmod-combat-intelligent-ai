@@ -17,4 +17,4 @@ include(DIR .. "retreat.lua")     -- 7  RETREAT
 include(DIR .. "investigate.lua") -- 8  INVESTIGATE
 include(DIR .. "regroup.lua")     -- 9  REGROUP
 include(DIR .. "room_clear.lua")  -- 10 ROOM_CLEAR
-include(DIR .. "bounded.lua")     -- 11 BOUNDED
+include(DIR .. "bounded.lua")      -- 11 BOUNDED

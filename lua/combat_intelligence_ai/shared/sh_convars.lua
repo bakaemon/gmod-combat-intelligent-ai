@@ -11,7 +11,7 @@ SVar("cai_suppression", "1", "Enable the suppression system.")
 SVar("cai_memory", "1", "Enable the memory system.")
 SVar("cai_flanking", "1", "Enable flanking maneuvers.")
 SVar("cai_move_shoot", "1", "Enable NPCs to fire while moving (run-and-gun).")
-SVar("cai_hurt_react", "1", "NPCs break off to cover or evade immediately when shot, scaled by aggression.")
+SVar("cai_hurt_react", "1", "Enable the reactive flinch layer: a defensive movement rule (biased jink / purposeful reposition) when shot, never interrupting the active plan.")
 SVar("cai_search", "1", "Enable last-known-position searching.")
 SVar("cai_comms", "1", "Enable squad communication & shared knowledge.")
 SVar("cai_voice", "1", "Enable the modular voice line system.")
@@ -46,11 +46,14 @@ SVar("cai_voice_maxdist", "2000","Max distance (units) voice lines are audible."
 
 SVar("cai_debug", "0", "Enable the full debug overlay (admins).")
 SVar("cai_debug_rays", "1", "Draw vision/decision rays in debug mode.")
+SVar("cai_debug_transitions", "0", "Log state transitions to console (role, time-in-state, reason).")
+SVar("cai_debug_role", "", "If set (e.g. FLANKER), cai_debug_transitions only logs NPCs with this role. Empty = all.")
 
 if CLIENT then
 end
 
 function CAI.CVBool(name) local c = GetConVar(name) return c and c:GetBool() or false end
 function CAI.CVNum(name) local c = GetConVar(name) return c and c:GetFloat() or 0 end
+function CAI.CVStr(name) local c = GetConVar(name) return c and c:GetString() or "" end
 function CAI.Enabled() return CAI.CVBool("cai_enabled") end
 function CAI.Difficulty() return math.Clamp(CAI.CVNum("cai_difficulty"), 0.25, 3) end
