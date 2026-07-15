@@ -123,7 +123,7 @@ BR.Exec[2] = function(data)
             for i, m in ipairs(data.squad.members) do
                 if m == npc then idx = i break end
             end
-            local maxMS = math.max(1, math.floor(#data.squad.members * CAI.Config.SquadTactics.MoveShootFraction))
+            local maxMS = math.max(1, math.floor(#data.squad.members * (CAI.Config.SquadTactics.MoveShootFraction or 0.5)))
             if idx == 0 or idx > maxMS then return false end
         end
         data.fighting = nil

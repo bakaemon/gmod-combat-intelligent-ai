@@ -70,7 +70,7 @@ BR.Perceive = function(data)
             local best, bestD = nil, (CAI.Config.Perceive.PointBlankAcquire or 250) ^ 2
             for _, ply in ipairs(player.GetAll()) do
                 if IsValid(ply) and ply ~= self and CAI.Util.IsTargetable(ply)
-                   and ply:Disposition(self) == D_HT and not ply:IsSpec() then
+                   and self:Disposition(ply) == D_HT then
                     local d = self:GetPos():DistToSqr(ply:GetPos())
                     if d < bestD and CAI.Util.CanSee(self, ply) then
                         best, bestD = ply, d

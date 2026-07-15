@@ -518,6 +518,7 @@ C.SquadTactics = {
     ClearEntryDwell = 1.5,
     StaggerOffset = 0.4,
     StaggerFireWindow = 0.3,
+    MoveShootFraction = 0.5,
     BattleAwarenessRadius = 1200,
     BattleAwarenessDuration = 8,
 }
