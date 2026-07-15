@@ -136,6 +136,15 @@ BR.Decide = function(data)
             if IsValid(ownWep) and ownWep.Clip1 and ownWep:Clip1() == 0 then
                 return S.COVER, "reloading_cover"
             end
+            if CAI.CVBool("cai_hurt_react") then
+                local aggro = CAI.WeaponIntel.EffectiveAggression(data)
+                local grace = Lerp(aggro, CAI.Config.Suppression.HurtGraceMin,
+                                         CAI.Config.Suppression.HurtGraceMax)
+                if CurTime() - (data.lastHurtAt or 0) < grace then
+                    data.hurtReactUntil = CurTime() + grace
+                    return S.COVER, "hurt_react"
+                end
+            end
             if data.wantFlank then
                 data.wantFlank = nil
                 return S.FLANK, "squad_flank_order"

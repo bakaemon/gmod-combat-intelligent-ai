@@ -141,6 +141,12 @@ C.Suppression = {
     PinnedAt = 55,
     PanicAt = 85,
     FFMaxAllies = 4,
+    HurtGraceMin = 1.0,
+    HurtGraceMax = 3.0,
+    HurtEvadeDist = 300,
+    HurtCoverCdMin = 1.5,
+    HurtCoverCdMax = 8.0,
+    HurtExposeCd = 0.6,
     AccuracyPenaltySteps = { [30] = 1, [60] = 2, [85] = 3 },
 }
 
