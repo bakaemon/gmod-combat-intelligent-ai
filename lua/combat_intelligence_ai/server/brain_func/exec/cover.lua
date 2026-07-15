@@ -11,35 +11,6 @@ BR.Exec[3] = function(data)
     -- Refresh which cover spot currently shields us from the enemy.
     CAI.Cover.UpdateCoverStatus(data, enemy)
 
-    -- Hurt-response: when recently shot, flinch / relocate to break line of sight,
-    -- scaled by aggression (brave & reckless hold, cowards & defensive relocate often).
-    if CAI.CVBool("cai_hurt_react") and not CAI.CVBool("cai_performance_mode")
-       and CurTime() < (data.hurtReactUntil or 0) then
-        local now = CurTime()
-        local inCover = data.cover ~= nil
-        local aggro = CAI.WeaponIntel.EffectiveAggression(data)
-        local cd = inCover and Lerp(aggro, CAI.Config.Suppression.HurtCoverCdMin,
-                                            CAI.Config.Suppression.HurtCoverCdMax)
-                            or CAI.Config.Suppression.HurtExposeCd
-        if now - (data.evadeAt or 0) > cd then
-            local src = (IsValid(data.lastAttacker) and data.lastAttacker) or enemy
-            if IsValid(src) then
-                local away = npc:GetPos() - src:GetPos()
-                away.z = 0
-                away:Normalize()
-                local dist = inCover and CAI.Config.Suppression.HurtEvadeDist * 0.4
-                                    or CAI.Config.Suppression.HurtEvadeDist
-                local dest = CAI.Nav.SafeOffset(data, away, dist)
-                if dest and not CAI.Util.CanSeePos(src, dest + Vector(0, 0, 40)) then
-                    data.evadeAt = now
-                    data.cover = nil
-                    CAI.Nav.MoveTo(data, dest, "run")
-                    return
-                end
-            end
-        end
-    end
-
     if not data.cover then
         local pos = CAI.Cover.FindBest(data, enemy, enemyPos)
         if not pos and CurTime() - (data.nodeCoverAt or 0) > 3 then
@@ -72,7 +43,7 @@ BR.Exec[3] = function(data)
         end
     end
 
-    if data.cover and not CAI.Nav.Arrived(data, 80) then
+    if data.cover and npc:GetPos():DistToSqr(data.cover.pos) > 80 * 80 then
         local inGo = npc.IsCurrentSchedule and (npc:IsCurrentSchedule(SCHED_FORCED_GO)
             or npc:IsCurrentSchedule(SCHED_FORCED_GO_RUN))
         if not inGo and CurTime() - (data.moveIssuedAt or 0) > 1.0 then
@@ -105,7 +76,7 @@ BR.Exec[3] = function(data)
         end
     end
 
-    if CAI.Nav.Arrived(data, 80) then
+    if npc:GetPos():DistToSqr(data.cover.pos) < 80 * 80 then
         local aggro = CAI.CVNum("cai_aggression")
         local now = CurTime()
         if CAI.Suppression.IsPinned(data) and aggro < 0.95 then

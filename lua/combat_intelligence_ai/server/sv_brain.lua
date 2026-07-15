@@ -33,6 +33,7 @@ include(BRAIN .. "perceive.lua")
 include(BRAIN .. "sense.lua")
 include(BRAIN .. "decide.lua")
 include(BRAIN .. "exec.lua")
+include(BRAIN .. "react.lua")       -- BR.IsCommitted, BR.UnderFire, BR.Flinch
 include(BRAIN .. "think.lua")
 
 CAI.Prof.WrapFn(BR, "Prefire", "brain_prefire")
