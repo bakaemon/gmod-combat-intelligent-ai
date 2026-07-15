@@ -15,6 +15,7 @@ function N.MoveTo(data, pos, mode)
     npc:SetLastPosition(pos)
     npc:SetSchedule(sched)
     data.moveTarget = pos
+    data.moveMode = mode
     data.moveIssuedAt = CurTime()
     data.fighting = nil
     data.combatMoveAt = data.combatMoveAt or CurTime()

@@ -4,6 +4,33 @@ local BR = CAI.Brain
 -- clears transient per-state fields so stale state never leaks across states.
 function BR.SetState(data, newState, reason)
     if data.state == newState then return end
+    if CAI.CVBool("cai_debug_transitions") then
+        local role = CAI.ROLE_NAMES[data.role] or "?"
+        local want = CAI.CVStr("cai_debug_role")
+        if want == "" or want == role then
+            local npc = data.ent
+            local dur = CurTime() - (data.stateSince or 0)
+            local wep = npc.GetActiveWeapon and npc:GetActiveWeapon()
+            local clip = (IsValid(wep) and wep.Clip1) and wep:Clip1() or -1
+            local tdist = -1
+            local fenemy = npc.GetEnemy and npc:GetEnemy()
+            if IsValid(fenemy) then
+                tdist = math.Round(npc:GetPos():Distance(fenemy:GetPos()))
+            else
+                local fe = CAI.Memory.FreshestEnemy(data)
+                if IsValid(fe) then tdist = math.Round(npc:GetPos():Distance(fe:GetPos())) end
+            end
+            print(CAI.PrintPrefix .. ("[trans] %s idx=%d  %s(%.1fs) -> %s  reason=%s  td=%d | mor=%d sup=%d flank=%s brk=%s scat=%s clip=%d")
+                :format(role, npc:EntIndex(),
+                    CAI.STATE_NAMES[data.state] or data.state, dur,
+                    CAI.STATE_NAMES[newState] or newState,
+                    reason or "?", tdist,
+                    math.Round(data.morale or 0), math.Round(data.suppression or 0),
+                    data.flank and "Y" or "n", tostring(data.flankBreak),
+                    data.scatterUntil and CurTime() < data.scatterUntil and "Y" or "n",
+                    clip))
+        end
+    end
     data.prevState = data.state
     data.state = newState
     data.fighting = nil
@@ -18,6 +45,11 @@ function BR.SetState(data, newState, reason)
     data.moveTarget = nil
     data.moveIssuedAt = nil
     data.patrolTarget = nil
+    -- Drop a stale cover spot when leaving COVER so the Flinch layer can't read
+    -- a far-away cover and wrongly decide we're already sheltered.
+    if newState ~= CAI.STATE.COVER then
+        data.cover = nil
+    end
     if newState ~= CAI.STATE.PATROL then
         data.patrolAt = CurTime()
     end
