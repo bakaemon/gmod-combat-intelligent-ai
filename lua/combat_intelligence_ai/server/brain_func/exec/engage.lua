@@ -41,6 +41,12 @@ BR.Exec[2] = function(data)
             if npc.SetEnemy then npc:SetEnemy(me) end
             if now < (data.meleePhaseEnd or 0) then return end
             if data.meleePhase == "swing" then
+                local act = npc.GetActivity and npc:GetActivity()
+                if act == ACT_MELEE_ATTACK1 or act == ACT_MELEE_ATTACK2
+                   or act == ACT_MELEE_ATTACK_SWING then
+                    data.meleePhaseEnd = now + 0.1
+                    return
+                end
                 -- Sidestep between swings so we're not a standing target.
                 data.meleePhase = "step"
                 data.meleePhaseEnd = now + mcfg.StepTime
@@ -56,16 +62,22 @@ BR.Exec[2] = function(data)
                     if dest then CAI.Nav.MoveTo(data, dest, "run") end
                 end
             else
-                -- Prefire: start the swing before we're fully in reach, but only
-                -- force the attack schedule when the engine agrees a swing can
-                -- actually land -- otherwise class-specific NPCs (metrocops etc.)
-                -- fail the schedule and spam "Schedule ... Failed at 1!". When
-                -- not yet in true reach, chase instead so the engine closes the
-                -- last gap and swings on its own.
+                local lead = mcfg.SwingLead or 0.4
+                local reach = mcfg.Reach or 80
+                local predicted = me:GetPos() + me:GetVelocity() * lead
+                local myPredicted = npc:GetPos() + npc:GetVelocity() * lead
+                local canHit = npc.HasCondition and npc:HasCondition(COND_CAN_MELEE_ATTACK1)
+                local willHit = myPredicted:DistToSqr(predicted) < reach * reach
                 data.meleePhase = "swing"
                 data.meleePhaseEnd = now + mcfg.ReSwing
                 data.moveTarget = nil
-                if npc.HasCondition and npc:HasCondition(COND_CAN_MELEE_ATTACK1) then
+                if npc.SetIdealYawAndUpdate then
+                    local toP = predicted - npc:GetPos()
+                    if toP:Length2DSqr() > 1 then
+                        npc:SetIdealYawAndUpdate(toP:Angle().yaw)
+                    end
+                end
+                if canHit or willHit then
                     npc:SetSchedule(SCHED_MELEE_ATTACK1)
                 else
                     npc:SetSchedule(SCHED_CHASE_ENEMY)
