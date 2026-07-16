@@ -56,11 +56,20 @@ BR.Exec[2] = function(data)
                     if dest then CAI.Nav.MoveTo(data, dest, "run") end
                 end
             else
-                -- Prefire: start the swing before we're fully in reach.
+                -- Prefire: start the swing before we're fully in reach, but only
+                -- force the attack schedule when the engine agrees a swing can
+                -- actually land -- otherwise class-specific NPCs (metrocops etc.)
+                -- fail the schedule and spam "Schedule ... Failed at 1!". When
+                -- not yet in true reach, chase instead so the engine closes the
+                -- last gap and swings on its own.
                 data.meleePhase = "swing"
                 data.meleePhaseEnd = now + mcfg.ReSwing
                 data.moveTarget = nil
-                npc:SetSchedule(SCHED_MELEE_ATTACK1)
+                if npc.HasCondition and npc:HasCondition(COND_CAN_MELEE_ATTACK1) then
+                    npc:SetSchedule(SCHED_MELEE_ATTACK1)
+                else
+                    npc:SetSchedule(SCHED_CHASE_ENEMY)
+                end
                 if mcfg.PlaybackRate ~= 1 and npc.SetPlaybackRate then
                     npc:SetPlaybackRate(mcfg.PlaybackRate)
                 end
