@@ -13,7 +13,7 @@ table.insert(BR.COA.PreTarget, function(data, npc)
 
     local mcfg = CAI.Config.Melee
     local pounceSqr = mcfg.Ambush.PounceDist * mcfg.Ambush.PounceDist
-.
+
     if IsValid(me) and npc:GetPos():DistToSqr(me:GetPos()) < pounceSqr then
         return CAI.STATE.ENGAGE, "melee_chase"
     end

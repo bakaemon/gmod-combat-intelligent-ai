@@ -77,7 +77,8 @@ BR.Exec[2] = function(data)
             return
         end
         data.meleePhase = nil
-        if mrec and now - (data.chaseAt or 0) > 0.8 then
+        local schedFailed = npc.HasCondition and npc:HasCondition(COND_TASK_FAILED)
+        if mrec and (schedFailed or now - (data.chaseAt or 0) > 0.8) then
             data.chaseAt = now
             if IsValid(me) and me.GetPos then
                 if npc.SetEnemy then npc:SetEnemy(me) end
@@ -180,7 +181,11 @@ BR.Exec[2] = function(data)
     if data.lastDecision == "cornered_melee" then
         if CurTime() - (data.meleeAt or 0) > 1.2 then
             data.meleeAt = CurTime()
-            npc:SetSchedule(SCHED_MELEE_ATTACK1)
+            if not npc.HasCondition or npc:HasCondition(COND_CAN_MELEE_ATTACK1) then
+                npc:SetSchedule(SCHED_MELEE_ATTACK1)
+            else
+                npc:SetSchedule(SCHED_CHASE_ENEMY)
+            end
             CAI.Voice.Speak(data, "panic")
         end
         return
