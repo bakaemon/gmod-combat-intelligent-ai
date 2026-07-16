@@ -66,7 +66,7 @@ local ownIdeal = {
 function WI.OwnIdeal(npc)
     local wep = npc.GetActiveWeapon and npc:GetActiveWeapon()
     if not IsValid(wep) then return 600 end
-    local arch = WI.Classify(wep:GetClass())
+    local arch = WI.Classify(wep)
     return ownIdeal[arch] or 600
 end
 
@@ -77,7 +77,7 @@ local ownRange = {
 function WI.OwnRange(npc)
     local wep = npc.GetActiveWeapon and npc:GetActiveWeapon()
     if not IsValid(wep) then return 1200 end
-    local arch = WI.Classify(wep:GetClass())
+    local arch = WI.Classify(wep)
     return ownRange[arch] or 1200
 end
 
@@ -91,7 +91,7 @@ end
 function WI.OwnArch(npc)
     local wep = npc.GetActiveWeapon and npc:GetActiveWeapon()
     if not IsValid(wep) then return nil end
-    return WI.Classify(wep:GetClass())
+    return WI.Classify(wep)
 end
 
 function WI.IsMeleeThreat(ent)

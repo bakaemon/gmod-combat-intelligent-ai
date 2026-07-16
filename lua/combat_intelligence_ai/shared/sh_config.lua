@@ -132,6 +132,7 @@ C.Cover = {
         escapeRoute = 1.5,
         highGround = 0.8,
         nearChokepoint = 0.6,
+        dark = 0.5,
     },
 }
 
@@ -606,6 +607,31 @@ C.Escape = {
     MeleeWindow    = 4,
     OverwhelmHits  = 3,
     WithdrawDist   = 350,
+}
+
+C.Melee = {
+    SwingRange      = 140,  
+    ReSwing         = 0.55,  
+    StepTime        = 0.35,  
+    StrafeStep      = 110,   
+    PlaybackRate    = 1.25,  
+    SupportRadius   = 450,   
+    SupportBonus    = 0.15,  
+    PistolPackSize  = 2,     
+    RushThreshold   = 0.55,
+    ShotgunOverride = 0.85,  
+    RushBase = {
+        unarmed = 1.0, melee = 1.0,
+        pistol = 0.45, smg = 0.35,
+        rifle = 0.10, lmg = 0.0,
+        sniper = 0.25, shotgun = -0.5,
+        rocket = 0.0, explosive = 0.0,
+    },
+    Ambush = {
+        MaxWait    = 12,   
+        PounceDist = 420,  
+        RepickDist = 900,  
+    },
 }
 
 C.SelfPreserve = {

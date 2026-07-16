@@ -31,25 +31,104 @@ BR.Exec[2] = function(data)
         return not CAI.Memory.AvoidPos(data, p, CAI.Config.SelfPreserve.DangerAvoid.AdvanceIntoRadius)
     end
 
+    -- Melee chase: close in, prefire the swing before fully in reach, and keep
+    -- sidestepping between swings so we're never a standing target.
     if data.lastDecision == "melee_chase" then
+        local mcfg = CAI.Config.Melee
         local me, mrec = BR.CombatTarget(data)
-        if IsValid(me) and npc:GetPos():DistToSqr(me:GetPos()) < 90 * 90 then
-            if CurTime() - (data.meleeAt or 0) > 0.9 then
-                data.meleeAt = CurTime()
-                if npc.SetEnemy then npc:SetEnemy(me) end
+        local now = CurTime()
+        if IsValid(me) and npc:GetPos():DistToSqr(me:GetPos()) < mcfg.SwingRange * mcfg.SwingRange then
+            if npc.SetEnemy then npc:SetEnemy(me) end
+            if now < (data.meleePhaseEnd or 0) then return end
+            if data.meleePhase == "swing" then
+                -- Sidestep between swings so we're not a standing target.
+                data.meleePhase = "step"
+                data.meleePhaseEnd = now + mcfg.StepTime
+                local toMe = me:GetPos() - npc:GetPos()
+                toMe.z = 0
+                if toMe:LengthSqr() > 1 then
+                    toMe:Normalize()
+                    local right = Vector(-toMe.y, toMe.x, 0)
+                    data.meleeSide = data.meleeSide or (math.random() < 0.5 and 1 or -1)
+                    if math.random() < 0.35 then data.meleeSide = -data.meleeSide end
+                    local dest = CAI.Nav.SafeOffset(me:GetPos(), right * data.meleeSide, mcfg.StrafeStep)
+                              or CAI.Nav.SafeOffset(npc:GetPos(), right * data.meleeSide, mcfg.StrafeStep)
+                    if dest then CAI.Nav.MoveTo(data, dest, "run") end
+                end
+            else
+                -- Prefire: start the swing before we're fully in reach.
+                data.meleePhase = "swing"
+                data.meleePhaseEnd = now + mcfg.ReSwing
                 data.moveTarget = nil
                 npc:SetSchedule(SCHED_MELEE_ATTACK1)
+                if mcfg.PlaybackRate ~= 1 and npc.SetPlaybackRate then
+                    npc:SetPlaybackRate(mcfg.PlaybackRate)
+                end
             end
             return
         end
-        if mrec and CurTime() - (data.chaseAt or 0) > 0.8 then
-            data.chaseAt = CurTime()
+        data.meleePhase = nil
+        if mrec and now - (data.chaseAt or 0) > 0.8 then
+            data.chaseAt = now
             if IsValid(me) and me.GetPos then
                 if npc.SetEnemy then npc:SetEnemy(me) end
                 CAI.Nav.MoveTo(data, me:GetPos(), "run")
             else
                 CAI.Nav.MoveTo(data, mrec.pos, "run")
             end
+        end
+        return
+    end
+
+    -- Melee ambush: hide in a dark spot near the enemy's position and pounce
+    -- when they wander close (or early if we've been spotted).
+    if data.lastDecision == "melee_ambush" then
+        local mcfg = CAI.Config.Melee
+        local acfg = mcfg.Ambush
+        local now = CurTime()
+        local me, mrec = BR.CombatTarget(data)
+        local threat = (IsValid(me) and me:GetPos()) or (mrec and mrec.pos)
+        if not threat then return end
+
+        -- Spring the trap when the enemy walks close, or early if we're spotted.
+        local dSqr = IsValid(me) and npc:GetPos():DistToSqr(me:GetPos()) or math.huge
+        local spotted = IsValid(me) and CAI.Util.CanSee(me, npc)
+        if dSqr < acfg.PounceDist * acfg.PounceDist
+           or (spotted and dSqr < (acfg.PounceDist * 1.6) ^ 2) then
+            data.ambush = nil
+            data.lastDecision = "melee_chase"
+            if npc.SetEnemy then npc:SetEnemy(me) end
+            CAI.Nav.MoveTo(data, me:GetPos(), "run")
+            return
+        end
+
+        -- Pick / refresh a hiding spot, dark strongly preferred.
+        if not data.ambush
+           or now - data.ambush.since > acfg.MaxWait
+           or threat:DistToSqr(data.ambush.threat) > acfg.RepickDist * acfg.RepickDist then
+            data.wantDarkCover = true
+            local spot = CAI.Cover.FindBest(data, me, threat)
+            data.wantDarkCover = nil
+            if not spot then
+                data.lastDecision = "melee_chase"
+                return
+            end
+            data.ambush = { pos = spot, since = now, threat = threat }
+            CAI.Nav.MoveTo(data, spot, "run")
+        end
+
+        if not CAI.Nav.Arrived(data, 60) then
+            if now - (data.moveIssuedAt or 0) > 1.2 then
+                CAI.Nav.MoveTo(data, data.ambush.pos, "run")
+            end
+            return
+        end
+
+        -- In position: hold still and wait.
+        if now - (data.ambushHoldAt or 0) > 2 then
+            data.ambushHoldAt = now
+            data.moveTarget = nil
+            npc:SetSchedule(SCHED_IDLE_STAND)
         end
         return
     end
@@ -289,4 +368,3 @@ BR.Exec[2] = function(data)
     end
     CAI.FriendlyFire.Update(data)
 end
-

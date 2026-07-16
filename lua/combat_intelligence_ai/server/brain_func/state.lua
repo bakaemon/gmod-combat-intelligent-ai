@@ -3,7 +3,10 @@ local BR = CAI.Brain
 -- SetState: transition helper. Only acts when the state actually changes, and
 -- clears transient per-state fields so stale state never leaks across states.
 function BR.SetState(data, newState, reason)
-    if data.state == newState then return end
+    if data.state == newState then
+        if reason then data.lastDecision = reason end
+        return
+    end
     if CAI.CVBool("cai_debug_transitions") then
         local role = CAI.ROLE_NAMES[data.role] or "?"
         local want = CAI.CVStr("cai_debug_role")
@@ -40,6 +43,8 @@ function BR.SetState(data, newState, reason)
     data.fleeSched = nil
     data.investFaced = nil
     data.retreatDest = nil
+    data.ambush = nil
+    data.meleePhase = nil
     data.stateSince = CurTime()
     if reason then data.lastDecision = reason end
     data.moveTarget = nil
