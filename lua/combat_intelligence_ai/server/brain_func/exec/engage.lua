@@ -5,6 +5,14 @@ local BR = CAI.Brain
 -- fighting, aggressive push/creep, kiting, and backing off when too close.
 BR.Exec[2] = function(data)
     local npc = data.ent
+
+    if CAI.WeaponIntel.IsMelee(npc)
+       and data.lastDecision ~= "melee_chase"
+       and data.lastDecision ~= "melee_ambush"
+       and data.lastDecision ~= "cornered_melee" then
+        data.lastDecision = "melee_chase"
+    end
+
     local moveShoot = CAI.CVBool("cai_move_shoot") and not CAI.CVBool("cai_performance_mode")
     local function tryMoveShoot()
         if not moveShoot then return false end
