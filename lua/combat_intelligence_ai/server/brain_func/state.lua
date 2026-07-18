@@ -65,8 +65,28 @@ BR.StopSuppressing = function(data)
     data.suppBullseye = nil
 end
 
+function BR.FireSchedule(data)
+    local npc = data.ent
+    if CAI.WeaponIntel.IsMelee(npc) then
+        local e = npc.GetEnemy and npc:GetEnemy()
+        if IsValid(e) and npc.HasCondition and npc:HasCondition(COND_CAN_MELEE_ATTACK1) then
+            npc:SetSchedule(SCHED_MELEE_ATTACK1)
+        elseif IsValid(e) then
+            npc:SetSchedule(SCHED_CHASE_ENEMY)
+        else
+            npc:SetSchedule(SCHED_IDLE_STAND)
+        end
+        return
+    end
+    npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
+end
+
 function BR.Prefire(data, pos)
     local npc = data.ent
+    if CAI.WeaponIntel.IsMelee(npc) then
+        BR.FireSchedule(data)
+        return
+    end
     if not CAI.CVBool("cai_suppression") then
         npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
         return

@@ -174,7 +174,7 @@ function CV.ScoreSpot(data, spot, enemy, enemyPos)
     score = score + W.history * CAI.Battlefield.CoverHistory(data.squad, spot)
 
     local darkW = data.wantDarkCover and 2.5 or (W.dark or 0)
-    if darkW > 0 then
+    if darkW > 0 and not CAI.CVBool("cai_performance_mode") then
         score = score + darkW * CV.SpotShade(spot)
     end
 

@@ -56,6 +56,11 @@ BR.Exec[2] = function(data)
                     return
                 end
                 -- Sidestep between swings so we're not a standing target.
+                -- In performance mode skip this step
+                if CAI.CVBool("cai_performance_mode") then
+                    data.meleePhase = nil
+                    return
+                end
                 data.meleePhase = "step"
                 data.meleePhaseEnd = now + mcfg.StepTime
                 local toMe = me:GetPos() - npc:GetPos()

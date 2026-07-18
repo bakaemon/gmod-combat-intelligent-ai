@@ -109,7 +109,7 @@ BR.Exec[3] = function(data)
                        and CurTime() - (prec.t or 0) < 4 then
                         CAI.Brain.Prefire(data, prec.pos)
                     else
-                        npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
+                        CAI.Brain.FireSchedule(data)
                     end
                 end
             end
@@ -117,4 +117,3 @@ BR.Exec[3] = function(data)
     end
     CAI.FriendlyFire.Update(data)
 end
-

@@ -16,7 +16,7 @@ BR.Exec[11] = function(data)
     if not data.boundArrived then
         data.boundArrived = CurTime()
         data.fighting = nil
-        npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
+        CAI.Brain.FireSchedule(data)
     end
     local fireDuration = CAI.Config.SquadTactics.BoundFireDuration
     local cornerpush = CAI.CVBool("cai_cornerpush")
@@ -42,7 +42,7 @@ BR.Exec[11] = function(data)
         else
             data.boundArrived = CurTime()
             data.fighting = nil
-            npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
+            CAI.Brain.FireSchedule(data)
         end
     else
         if cornerpush and (CurTime() - (data.lastHurtAt or 0) < 0.5) then
