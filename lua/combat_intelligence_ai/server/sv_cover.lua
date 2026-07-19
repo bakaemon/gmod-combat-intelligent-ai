@@ -2,6 +2,20 @@ CAI.Cover = CAI.Cover or {}
 local CV = CAI.Cover
 
 local spotCache = {}
+local shadeCache = {}
+function CV.SpotShade(pos)
+    local key = math.floor(pos.x / 64) .. ":" .. math.floor(pos.y / 64) .. ":" .. math.floor(pos.z / 64)
+    local c = shadeCache[key]
+    if c and CurTime() - c.t < 20 then return c.v end
+    local tr = util.TraceLine({
+        start = pos + Vector(0, 0, 40),
+        endpos = pos + Vector(0, 0, 4000),
+        mask = MASK_SOLID_BRUSHONLY,
+    })
+    local v = (tr.Hit and not tr.HitSky) and 1 or 0
+    shadeCache[key] = { v = v, t = CurTime() }
+    return v
+end
 
 local function GatherSpots(origin, enemy, enemyPos)
     local cfg = CAI.Config.Cover
@@ -158,6 +172,11 @@ function CV.ScoreSpot(data, spot, enemy, enemyPos)
     end
 
     score = score + W.history * CAI.Battlefield.CoverHistory(data.squad, spot)
+
+    local darkW = data.wantDarkCover and 2.5 or (W.dark or 0)
+    if darkW > 0 and not CAI.CVBool("cai_performance_mode") then
+        score = score + darkW * CV.SpotShade(spot)
+    end
 
     return score
 end
