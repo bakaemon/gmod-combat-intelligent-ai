@@ -14,7 +14,11 @@ function S.Add(data, amount)
         CAI.Voice.Speak(data, "taking_fire")
         if data.squad then
             CAI.Squad.Broadcast(data.squad, "taking_fire", data.ent)
-            CAI.Squad.Broadcast(data.squad, "need_help", data.ent, { pos = data.ent:GetPos() })
+            data.squad.lastHelpCallAt = data.squad.lastHelpCallAt or 0
+            if CurTime() - data.squad.lastHelpCallAt > 6 then
+                data.squad.lastHelpCallAt = CurTime()
+                CAI.Squad.Broadcast(data.squad, "need_help", data.ent, { pos = data.ent:GetPos() })
+            end
         end
     end
 end

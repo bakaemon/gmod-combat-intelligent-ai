@@ -47,8 +47,12 @@ BR.Perceive = function(data)
                     CAI.Voice.Speak(data, "enemy_spotted")
                     CAI.Squad.Broadcast(data.squad, "enemy_spotted", npc,
                         { enemy = engineEnemy, pos = engineEnemy:GetPos() })
-                    CAI.Squad.Broadcast(data.squad, "need_help", npc,
-                        { pos = engineEnemy:GetPos() })
+                    data.squad.lastHelpCallAt = data.squad.lastHelpCallAt or 0
+                    if CurTime() - data.squad.lastHelpCallAt > 6 then
+                        data.squad.lastHelpCallAt = CurTime()
+                        CAI.Squad.Broadcast(data.squad, "need_help", npc,
+                            { pos = engineEnemy:GetPos() })
+                    end
                 end
             end
         else

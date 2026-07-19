@@ -3,7 +3,10 @@ local BR = CAI.Brain
 -- SetState: transition helper. Only acts when the state actually changes, and
 -- clears transient per-state fields so stale state never leaks across states.
 function BR.SetState(data, newState, reason)
-    if data.state == newState then return end
+    if data.state == newState then
+        if reason then data.lastDecision = reason end
+        return
+    end
     if CAI.CVBool("cai_debug_transitions") then
         local role = CAI.ROLE_NAMES[data.role] or "?"
         local want = CAI.CVStr("cai_debug_role")
@@ -40,6 +43,8 @@ function BR.SetState(data, newState, reason)
     data.fleeSched = nil
     data.investFaced = nil
     data.retreatDest = nil
+    data.ambush = nil
+    data.meleePhase = nil
     data.stateSince = CurTime()
     if reason then data.lastDecision = reason end
     data.moveTarget = nil
@@ -56,12 +61,38 @@ function BR.SetState(data, newState, reason)
 end
 
 BR.StopSuppressing = function(data)
-    if IsValid(data.suppBullseye) then data.suppBullseye:Remove() end
+    if IsValid(data.suppBullseye) then
+        local npc = data.ent
+        if IsValid(npc) and npc.GetEnemy and npc:GetEnemy() == data.suppBullseye then
+            npc:SetEnemy(NULL)
+        end
+        data.suppBullseye:Remove()
+    end
     data.suppBullseye = nil
+end
+
+function BR.FireSchedule(data)
+    local npc = data.ent
+    if CAI.WeaponIntel.IsMelee(npc) then
+        local e = npc.GetEnemy and npc:GetEnemy()
+        if IsValid(e) and npc.HasCondition and npc:HasCondition(COND_CAN_MELEE_ATTACK1) then
+            npc:SetSchedule(SCHED_MELEE_ATTACK1)
+        elseif IsValid(e) then
+            npc:SetSchedule(SCHED_CHASE_ENEMY)
+        else
+            npc:SetSchedule(SCHED_IDLE_STAND)
+        end
+        return
+    end
+    npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
 end
 
 function BR.Prefire(data, pos)
     local npc = data.ent
+    if CAI.WeaponIntel.IsMelee(npc) then
+        BR.FireSchedule(data)
+        return
+    end
     if not CAI.CVBool("cai_suppression") then
         npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
         return
