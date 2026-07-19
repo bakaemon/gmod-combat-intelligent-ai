@@ -156,13 +156,14 @@ function SQ.OnComm(data, event, sender, payload)
     elseif event == "retreating" then
         CAI.Morale.Add(data, -4, "ally_retreating")
     elseif event == "need_help" and payload then
-        if data.state ~= CAI.STATE.ENGAGE and data.state ~= CAI.STATE.RETREAT then
+        local st = data.state
+        local canAnswer = st == CAI.STATE.IDLE or st == CAI.STATE.PATROL
+            or st == CAI.STATE.SEARCH or st == CAI.STATE.REGROUP
+        if canAnswer and not data.flank
+           and CurTime() - (data.helpRespondAt or 0) > 8 then
+            data.helpRespondAt = CurTime()
             data.reinforceTarget = payload.pos
-            -- A live flanker is mid-maneuver; do not yank it to REGROUP or the
-            -- flank collapses. Record the request but leave its state alone.
-            if not data.flank then
-                CAI.Brain.SetState(data, CAI.STATE.REGROUP, "help_request")
-            end
+            CAI.Brain.SetState(data, CAI.STATE.REGROUP, "help_request")
         end
     elseif event == "suppression_active" and payload then
         if data.role == CAI.ROLE.SUPPRESSOR and data.state == CAI.STATE.SUPPRESS then

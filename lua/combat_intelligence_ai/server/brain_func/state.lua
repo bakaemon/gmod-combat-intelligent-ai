@@ -61,7 +61,13 @@ function BR.SetState(data, newState, reason)
 end
 
 BR.StopSuppressing = function(data)
-    if IsValid(data.suppBullseye) then data.suppBullseye:Remove() end
+    if IsValid(data.suppBullseye) then
+        local npc = data.ent
+        if IsValid(npc) and npc.GetEnemy and npc:GetEnemy() == data.suppBullseye then
+            npc:SetEnemy(NULL)
+        end
+        data.suppBullseye:Remove()
+    end
     data.suppBullseye = nil
 end
 
