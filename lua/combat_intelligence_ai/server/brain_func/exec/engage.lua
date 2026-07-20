@@ -80,7 +80,7 @@ BR.Exec[2] = function(data)
                 local reach = mcfg.Reach or 80
                 local predicted = me:GetPos() + me:GetVelocity() * lead
                 local myPredicted = npc:GetPos() + npc:GetVelocity() * lead
-                local canHit = npc.HasCondition and npc:HasCondition(COND_CAN_MELEE_ATTACK1)
+                local canHit = npc.HasCondition and COND_CAN_MELEE_ATTACK1 and npc:HasCondition(COND_CAN_MELEE_ATTACK1)
                 local willHit = myPredicted:DistToSqr(predicted) < reach * reach
                 data.meleePhase = "swing"
                 data.meleePhaseEnd = now + mcfg.ReSwing
@@ -107,7 +107,7 @@ BR.Exec[2] = function(data)
             return
         end
         data.meleePhase = nil
-        local schedFailed = npc.HasCondition and npc:HasCondition(COND_TASK_FAILED)
+        local schedFailed = npc.HasCondition and COND_TASK_FAILED and npc:HasCondition(COND_TASK_FAILED)
         if mrec and (schedFailed or now - (data.chaseAt or 0) > 0.8) then
             data.chaseAt = now
             if IsValid(me) and me.GetPos then
@@ -213,7 +213,7 @@ BR.Exec[2] = function(data)
     if decision == "cornered_melee" then
         if CurTime() - (data.meleeAt or 0) > 1.2 then
             data.meleeAt = CurTime()
-            if not npc.HasCondition or npc:HasCondition(COND_CAN_MELEE_ATTACK1) then
+            if not npc.HasCondition or not COND_CAN_MELEE_ATTACK1 or npc:HasCondition(COND_CAN_MELEE_ATTACK1) then
                 npc:SetSchedule(SCHED_MELEE_ATTACK1)
             else
                 npc:SetSchedule(SCHED_CHASE_ENEMY)
