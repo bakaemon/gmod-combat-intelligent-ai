@@ -6,11 +6,12 @@ local BR = CAI.Brain
 BR.Exec[2] = function(data)
     local npc = data.ent
 
+    local decision = data.lastDecision
     if CAI.WeaponIntel.IsMelee(npc)
-       and data.lastDecision ~= "melee_chase"
-       and data.lastDecision ~= "melee_ambush"
-       and data.lastDecision ~= "cornered_melee" then
-        data.lastDecision = "melee_chase"
+       and decision ~= "melee_chase"
+       and decision ~= "melee_ambush"
+       and decision ~= "cornered_melee" then
+        decision = "melee_chase"
     end
 
     local moveShoot = CAI.CVBool("cai_move_shoot") and not CAI.CVBool("cai_performance_mode")
@@ -41,7 +42,7 @@ BR.Exec[2] = function(data)
 
     -- Melee chase: close in, prefire the swing before fully in reach, and keep
     -- sidestepping between swings so we're never a standing target.
-    if data.lastDecision == "melee_chase" then
+    if decision == "melee_chase" then
         local mcfg = CAI.Config.Melee
         local me, mrec = BR.CombatTarget(data)
         local now = CurTime()
@@ -84,13 +85,17 @@ BR.Exec[2] = function(data)
                 data.meleePhase = "swing"
                 data.meleePhaseEnd = now + mcfg.ReSwing
                 data.moveTarget = nil
-                if npc.SetIdealYawAndUpdate then
-                    local toP = predicted - npc:GetPos()
-                    if toP:Length2DSqr() > 1 then
-                        npc:SetIdealYawAndUpdate(toP:Angle().yaw)
-                    end
-                end
                 if canHit or willHit then
+                    if npc.SetIdealYawAndUpdate then
+                        local toP = predicted - npc:GetPos()
+                        if toP:Length2DSqr() > 1 then
+                            local wantYaw = toP:Angle().yaw
+                            local diff = math.abs(math.AngleDifference(wantYaw, npc:GetAngles().yaw))
+                            if diff > 20 then
+                                npc:SetIdealYawAndUpdate(wantYaw)
+                            end
+                        end
+                    end
                     npc:SetSchedule(SCHED_MELEE_ATTACK1)
                 else
                     npc:SetSchedule(SCHED_CHASE_ENEMY)
@@ -117,7 +122,7 @@ BR.Exec[2] = function(data)
 
     -- Melee ambush: hide in a dark spot near the enemy's position and pounce
     -- when they wander close (or early if we've been spotted).
-    if data.lastDecision == "melee_ambush" then
+    if decision == "melee_ambush" then
         local mcfg = CAI.Config.Melee
         local acfg = mcfg.Ambush
         local now = CurTime()
@@ -132,6 +137,7 @@ BR.Exec[2] = function(data)
            or (spotted and dSqr < (acfg.PounceDist * 1.6) ^ 2) then
             data.ambush = nil
             data.lastDecision = "melee_chase"
+            decision = "melee_chase"
             if npc.SetEnemy then npc:SetEnemy(me) end
             CAI.Nav.MoveTo(data, me:GetPos(), "run")
             return
@@ -146,6 +152,7 @@ BR.Exec[2] = function(data)
             data.wantDarkCover = nil
             if not spot then
                 data.lastDecision = "melee_chase"
+                decision = "melee_chase"
                 return
             end
             data.ambush = { pos = spot, since = now, threat = threat }
@@ -168,7 +175,7 @@ BR.Exec[2] = function(data)
         return
     end
 
-    if data.lastDecision == "point_blank_fight" then
+    if decision == "point_blank_fight" then
         local pcfg = CAI.Config.Escape
         local foe = data.pbEnemy
         if not IsValid(foe) then foe = BR.CombatTarget(data) end
@@ -203,7 +210,7 @@ BR.Exec[2] = function(data)
 
     local enemy = npc:GetEnemy()
     if not IsValid(enemy) then return end
-    if data.lastDecision == "cornered_melee" then
+    if decision == "cornered_melee" then
         if CurTime() - (data.meleeAt or 0) > 1.2 then
             data.meleeAt = CurTime()
             if not npc.HasCondition or npc:HasCondition(COND_CAN_MELEE_ATTACK1) then
@@ -247,7 +254,7 @@ BR.Exec[2] = function(data)
 
     -- Aggressive push: close the distance in bursts, fire on the move, then
     -- creep forward when in ideal range, bail back if the enemy gets point-blank.
-    if data.lastDecision == "aggressive_push" then
+    if decision == "aggressive_push" then
         local pcfg = CAI.Config.Push
         local creepRange = ideal * pcfg.CreepMult
         local stopRange = ideal * pcfg.StopMult
