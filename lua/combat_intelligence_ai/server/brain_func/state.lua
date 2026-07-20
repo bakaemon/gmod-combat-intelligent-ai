@@ -75,7 +75,7 @@ function BR.FireSchedule(data)
     local npc = data.ent
     if CAI.WeaponIntel.IsMelee(npc) then
         local e = npc.GetEnemy and npc:GetEnemy()
-        if IsValid(e) and npc.HasCondition and npc:HasCondition(COND_CAN_MELEE_ATTACK1) then
+        if IsValid(e) and npc.HasCondition and COND_CAN_MELEE_ATTACK1 and npc:HasCondition(COND_CAN_MELEE_ATTACK1) then
             npc:SetSchedule(SCHED_MELEE_ATTACK1)
         elseif IsValid(e) then
             npc:SetSchedule(SCHED_CHASE_ENEMY)
