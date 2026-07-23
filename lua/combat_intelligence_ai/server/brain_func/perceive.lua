@@ -47,14 +47,42 @@ BR.Perceive = function(data)
                     CAI.Voice.Speak(data, "enemy_spotted")
                     CAI.Squad.Broadcast(data.squad, "enemy_spotted", npc,
                         { enemy = engineEnemy, pos = engineEnemy:GetPos() })
-                    CAI.Squad.Broadcast(data.squad, "need_help", npc,
-                        { pos = engineEnemy:GetPos() })
+                    data.squad.lastHelpCallAt = data.squad.lastHelpCallAt or 0
+                    if CurTime() - data.squad.lastHelpCallAt > 6 then
+                        data.squad.lastHelpCallAt = CurTime()
+                        CAI.Squad.Broadcast(data.squad, "need_help", npc,
+                            { pos = engineEnemy:GetPos() })
+                    end
                 end
             end
         else
             local rec = data.memory.enemies[engineEnemy]
             if not rec or (rec.heardOnly and CurTime() - rec.t > 1.0) then
                 CAI.Memory.HearEnemy(data, engineEnemy, engineEnemy:GetPos())
+            end
+        end
+    end
+
+    -- Hard point-blank acquisition fallback: if we somehow have no enemy yet,
+    -- grab any hostile, non-spectator player within range that we can see. This
+    -- stops NPCs being "blind" to a target standing right in front of them.
+    if CurTime() - (data.pbScanAt or 0) > (CAI.Config.Perceive.PointBlankScan or 0.5) then
+        data.pbScanAt = CurTime()
+        local cur = npc.GetEnemy and npc:GetEnemy()
+        if not (IsValid(cur) and CAI.Util.IsTargetable(cur)) then
+            local self = npc
+            local best, bestD = nil, (CAI.Config.Perceive.PointBlankAcquire or 250) ^ 2
+            for _, ply in ipairs(player.GetAll()) do
+                if IsValid(ply) and ply ~= self and CAI.Util.IsTargetable(ply)
+                   and self:Disposition(ply) == D_HT then
+                    local d = self:GetPos():DistToSqr(ply:GetPos())
+                    if d < bestD and CAI.Util.CanSee(self, ply) then
+                        best, bestD = ply, d
+                    end
+                end
+            end
+            if IsValid(best) then
+                CAI.Memory.SeeEnemy(data, best, best:GetPos())
             end
         end
     end

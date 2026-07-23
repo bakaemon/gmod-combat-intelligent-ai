@@ -14,7 +14,11 @@ function S.Add(data, amount)
         CAI.Voice.Speak(data, "taking_fire")
         if data.squad then
             CAI.Squad.Broadcast(data.squad, "taking_fire", data.ent)
-            CAI.Squad.Broadcast(data.squad, "need_help", data.ent, { pos = data.ent:GetPos() })
+            data.squad.lastHelpCallAt = data.squad.lastHelpCallAt or 0
+            if CurTime() - data.squad.lastHelpCallAt > 6 then
+                data.squad.lastHelpCallAt = CurTime()
+                CAI.Squad.Broadcast(data.squad, "need_help", data.ent, { pos = data.ent:GetPos() })
+            end
         end
     end
 end
@@ -36,15 +40,21 @@ local MAX_QUEUE = 128
 CAI.SafeHook("EntityFireBullets", "CAI_Suppression", CAI.Prof.Wrap("supp_fire_block", function(shooter, info)
     if not CAI.Enabled() then return end
     if not IsValid(shooter) then return end
-    if shooter:IsNPC() and CAI.Manager.Get(shooter) and info then
+    if shooter:IsNPC() and CAI.Manager.Get(shooter) and info
+       and not CAI.CVBool("cai_performance_mode") then
         local src = info.Src
         local dir = info.Dir
         local dist = info.Distance or 8000
         local dst = src + dir * dist
+        local ffMax = CAI.Config.Suppression.FFMaxAllies or 4
+        local checked = 0
         for fNPC, fData in pairs(CAI.Manager.All()) do
+            if checked >= ffMax then break end
             if IsValid(fNPC) and fNPC ~= shooter
                and shooter:Disposition(fNPC) == D_LI
+               and fNPC:GetPos():DistToSqr(src) < 2400 * 2400
                and CAI.Util.PointSegmentDist(fNPC:GetPos(), src, dst) <= 220 then
+                checked = checked + 1
                 local tr = util.TraceHull({
                     start = src, endpos = dst,
                     filter = shooter,

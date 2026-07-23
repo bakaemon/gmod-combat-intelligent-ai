@@ -63,6 +63,57 @@ C.LOD = {
 C.MaxBrainThinksPerTick = 12
 C.ManagerTickRate = 0.05
 
+C.Engage = {
+    -- Distance (u) under which a NPC with no line of sight backs off to regain
+    -- a sightline. With line of sight it simply holds and fires instead.
+    PointBlank = 120,
+    -- Minimum seconds between re-issuing the fire schedule (no schedule thrash).
+    RetryGap = 0.4,
+    -- Distance (u) within which a known enemy (fresh memory, no clean LOS) is
+    -- still engaged as a CQB push instead of falling to INVESTIGATE/SEARCH.
+    BlindPushRange = 1000,
+}
+
+C.Flank = {
+    -- cai_aggression at or above this lets any squad member peel off to flank a
+    -- hidden enemy. Below it, only a designated FLANKER flanks.
+    AggressiveAt = 0.7,
+    -- Distance (u) to the enemy (or any other enemy) at which a flank opens
+    -- fire and runs-and-guns instead of finishing the silent maneuver.
+    FireDist = 500,
+    -- Seconds: maximum age of rec.t (last known enemy position) to START a flank.
+    -- Checked only at initiation, not mid-flank, because rec.t ages during a
+    -- blind (no live LOS) flank.
+    FreshWindow = 8,
+    -- Lateral offset (u) from rec.pos at which we aim to reach the enemy's SIDE
+    -- (the flank/attack point). This is the heart of a flank: get off the enemy's
+    -- front, not sneak up to it.
+    FlankOffset = 400,
+    -- navPt snap reject radius (u): a snapped nav point further than this from the
+    -- intended offset is rejected, so routing stays in-space instead of collapsing
+    -- onto whatever cover happens to be near the NPC.
+    MaxSnap = 250,
+    -- Waypoint lateral-bow cap (u).
+    MaxBow = 500,
+    -- Waypoint forward-term cap (u).
+    ForwardCap = 600,
+    -- Waypoint forward fraction of the NPC->attackPos vector.
+    WaypointFrac = 0.5,
+    -- Waypoint side bias (u).
+    BowOffset = 300,
+    -- Envelope (u): the waypoint must stay within this of the NPC, so it cannot
+    -- route the NPC back across the enemy.
+    WaypointMax = 900,
+}
+
+C.Perceive = {
+    -- Distance (u) for the hard point-blank target-acquisition fallback: a
+    -- hostile player this close with line of sight is always noticed.
+    PointBlankAcquire = 250,
+    -- Throttle (s) for that scan so it is not run every think.
+    PointBlankScan = 0.5,
+}
+
 C.Cover = {
     SearchRadius = 1200,
     MinEnemyDist = 250,
@@ -81,6 +132,7 @@ C.Cover = {
         escapeRoute = 1.5,
         highGround = 0.8,
         nearChokepoint = 0.6,
+        dark = 0.5,
     },
 }
 
@@ -109,13 +161,46 @@ C.Morale = {
 
 C.Suppression = {
     Radius = 140,
-    PerBullet = 9,
+    PerBullet = 14,
     Explosion = 45,
-    Decay = 14,
+    Decay = 9,
     Max = 100,
     PinnedAt = 55,
     PanicAt = 85,
+    FightOpenAggro = 0.5,
+    FightOpenSpread = 0.25,
+    FFMaxAllies = 4,
+    HurtGraceMin = 1.0,
+    HurtGraceMax = 3.0,
+    HurtCoverCdMin = 1.5,
+    HurtCoverCdMax = 8.0,
+    HurtExposeCd = 0.6,
     AccuracyPenaltySteps = { [30] = 1, [60] = 2, [85] = 3 },
+}
+
+C.Flinch = {
+    -- Jink step distance (u) used for the defensive reposition.
+    JinkDistMin = 120,
+    JinkDistMax = 300,
+    -- How often the jink destination is re-planned (anti-thrash; throttles the
+    -- cover search). Kept short so the maneuver reads as a semi-random weave.
+    JinkReplanMin = 0.3,
+    JinkReplanMax = 0.7,
+    -- Max lateral deviation (deg) applied to the plan's intended direction.
+    JinkAngleMax = 60,
+    -- Fraction a plan-moving NPC's destination is nudged toward nearby cover.
+    CoverLean = 0.25,
+    -- Burst/run cycle for an injected reposition: walk (return distracting
+    -- fire) then run (reposition), bounded by the hurt-grace window so return
+    -- fire is never indefinite.
+    BurstMin = 0.5,
+    BurstMax = 1.0,
+    RunMin = 0.4,
+    RunMax = 0.8,
+    -- Suppression level (0..100) at/above which the NPC counts as "being shot
+    -- at" and the flinch rule engages. Below a single hit's +18, so a lone
+    -- glancing hit still triggers a flinch.
+    UnderFireAt = 10,
 }
 
 C.WeaponPatterns = {
@@ -465,7 +550,7 @@ C.Plan = {
     PushAdvantage = 1.6,
 }
 
-C.LastVisGrace = 1.0
+C.LastVisGrace = 2.5
 
 C.SpatialMap = {
     ScanInterval = 5.0,
@@ -492,6 +577,7 @@ C.SquadTactics = {
     ClearEntryDwell = 1.5,
     StaggerOffset = 0.4,
     StaggerFireWindow = 0.3,
+    MoveShootFraction = 0.5,
     BattleAwarenessRadius = 1200,
     BattleAwarenessDuration = 8,
 }
@@ -521,6 +607,31 @@ C.Escape = {
     MeleeWindow    = 4,
     OverwhelmHits  = 3,
     WithdrawDist   = 350,
+}
+
+C.Melee = {
+    SwingRange      = 140,  
+    ReSwing         = 0.55,  
+    StepTime        = 0.35,  
+    StrafeStep      = 110,   
+    PlaybackRate    = 1.25,  
+    SupportRadius   = 450,   
+    SupportBonus    = 0.15,  
+    PistolPackSize  = 2,     
+    RushThreshold   = 0.55,
+    ShotgunOverride = 0.85,  
+    RushBase = {
+        unarmed = 1.0, melee = 1.0,
+        pistol = 0.45, smg = 0.35,
+        rifle = 0.10, lmg = 0.0,
+        sniper = 0.25, shotgun = -0.5,
+        rocket = 0.0, explosive = 0.0,
+    },
+    Ambush = {
+        MaxWait    = 12,   
+        PounceDist = 420,  
+        RepickDist = 900,  
+    },
 }
 
 C.SelfPreserve = {

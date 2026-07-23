@@ -156,7 +156,12 @@ function SQ.OnComm(data, event, sender, payload)
     elseif event == "retreating" then
         CAI.Morale.Add(data, -4, "ally_retreating")
     elseif event == "need_help" and payload then
-        if data.state ~= CAI.STATE.ENGAGE and data.state ~= CAI.STATE.RETREAT then
+        local st = data.state
+        local canAnswer = st == CAI.STATE.IDLE or st == CAI.STATE.PATROL
+            or st == CAI.STATE.SEARCH or st == CAI.STATE.REGROUP
+        if canAnswer and not data.flank
+           and CurTime() - (data.helpRespondAt or 0) > 8 then
+            data.helpRespondAt = CurTime()
             data.reinforceTarget = payload.pos
             CAI.Brain.SetState(data, CAI.STATE.REGROUP, "help_request")
         end
@@ -264,6 +269,7 @@ function SQ.Plan(squad)
     local now = CurTime()
     if now - squad.lastPlan < CAI.Config.Plan.Interval then return end
     squad.lastPlan = now
+    local aggro = CAI.CVNum("cai_aggression")
 
     CAI.Battlefield.Prune(squad)
     SQ.AssignRoles(squad)
@@ -303,7 +309,8 @@ function SQ.Plan(squad)
         squad.plan = "hold"
     elseif inCombat and #squad.members >= enemies * cfg.PushAdvantage and withLOS > 0 then
         squad.plan = "push"
-    elseif inCombat and #squad.members >= cfg.FlankMinMembers and CAI.CVBool("cai_flanking") then
+    elseif inCombat and CAI.CVBool("cai_flanking")
+           and #squad.members >= (aggro >= CAI.Config.Flank.AggressiveAt and 2 or cfg.FlankMinMembers) then
         squad.plan = "flank"
     elseif inCombat then
         squad.plan = "hold"
@@ -330,15 +337,43 @@ function SQ.Plan(squad)
         end
     end
 
+    local maxFlankers = math.max(1, math.floor(#squad.members * 0.5))
+    local flankCount = 0
+    local function SQ_AwayFromLOS(d)
+        local npc = d.ent
+        if not IsValid(npc) then return true end
+        local pos = npc:GetPos()
+        for e in pairs(d.memory.enemies or {}) do
+            if IsValid(e) and CAI.Util.CanSeePos(e, pos) then return false end
+        end
+        return true
+    end
+
     for _, m in ipairs(squad.members) do
         local d = CAI.Manager.Get(m)
         if d then
             d.squadPlan = squad.plan
             if d.role == CAI.ROLE.SUPPRESSOR and (squad.plan == "push" or squad.plan == "flank" or squad.plan == "hold") then
-                d.suppressUntil = math.max(d.suppressUntil or 0, now + cfg.Interval * 2)
+                if not d.suppressUntil or now > d.suppressUntil then
+                    d.suppressStarted = now
+                end
+                if not d.suppressStarted or now - d.suppressStarted < 12 then
+                    d.suppressUntil = math.max(d.suppressUntil or 0, now + cfg.Interval * 2)
+                end
             elseif (squad.plan == "flank" or squad.plan == "push") and d.role == CAI.ROLE.FLANKER then
                 if not d.lastFlankAt or now - d.lastFlankAt > 15 then
                     d.wantFlank = true
+                    flankCount = flankCount + 1
+                end
+            elseif (squad.plan == "flank" or squad.plan == "push")
+                   and d.role ~= CAI.ROLE.FLANKER and d.ent ~= squad.leader
+                   and (not d.lastFlankAt or now - d.lastFlankAt > 15)
+                   and flankCount < maxFlankers then
+                local p = 0.15 + (d.personality.stats.aggression or 0) * 0.3
+                if SQ_AwayFromLOS(d) then p = p + 0.35 end
+                if math.random() < p then
+                    d.wantFlank = true
+                    flankCount = flankCount + 1
                 end
             end
             if d.role == CAI.ROLE.GRENADIER or d.role == CAI.ROLE.LEADER then
