@@ -180,6 +180,16 @@ local function DetectFlankRoute(fromArea, toArea)
     return { from = fromCenter, to = toCenter, path = path }
 end
 
+local allAreasCache, allAreasCacheAt = nil, 0
+local function AllNavAreas()
+    local now = CurTime()
+    if not allAreasCache or now - allAreasCacheAt > 30 then
+        allAreasCache = navmesh.GetAllNavAreas() or {}
+        allAreasCacheAt = now
+    end
+    return allAreasCache
+end
+
 function SM.Scan(squad)
     if not squad then return end
     local now = CurTime()
@@ -187,7 +197,7 @@ function SM.Scan(squad)
     local cfg = CAI.Config.SpatialMap
     if now - sm.lastScan < cfg.ScanInterval then return end
     sm.lastScan = now
-    local allAreas = navmesh.GetAllNavAreas() or {}
+    local allAreas = AllNavAreas()
     local areaCount = #allAreas
     local startIdx = sm.scanIdx or 0
     local budget = cfg.ScanBudget

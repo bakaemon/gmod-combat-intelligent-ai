@@ -4,6 +4,12 @@ local FF = CAI.FriendlyFire
 local function AllyBlocking(npc, enemy)
     local from = npc.GetShootPos and npc:GetShootPos() or CAI.Util.EyePos(npc)
     local to = CAI.Util.EyePos(enemy)
+    local dir = to - from
+    local dist = dir:Length()
+    if dist > 1200 then
+        dir:Mul(1200 / dist)
+        to = from + dir
+    end
     local tr = util.TraceHull({
         start = from, endpos = to,
         filter = npc,
@@ -44,7 +50,8 @@ function FF.Update(data)
     if IsValid(enemy) and CAI.Util.Alive(enemy) then
         data.ffCheckAt = data.ffCheckAt or 0
         if CurTime() > data.ffCheckAt then
-            data.ffCheckAt = CurTime() + 0.1
+            data.ffCheckAt = CurTime()
+                + (CAI.CVBool("cai_performance_mode") and 0.45 or 0.25)
             local blocked, blocker = AllyBlocking(npc, enemy)
             if blocked then
                 Sidestep(data, enemy)

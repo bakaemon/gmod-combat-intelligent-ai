@@ -19,8 +19,9 @@ end
 function SND.Emit(pos, stype, radius, source)
 
     if IsValid(source) and source:IsPlayer() and not CAI.Util.IsTargetable(source) then return end
+    local rSqr = radius * radius
     for npc, data in pairs(CAI.Manager.All()) do
-        if IsValid(npc) and npc:GetPos():DistToSqr(pos) < radius * radius then
+        if IsValid(npc) and npc:GetPos():DistToSqr(pos) < rSqr then
             local dominated = IsValid(source) and npc:Disposition(source) ~= D_HT and stype ~= "explosion"
             if dominated and IsValid(source) and source:IsNPC()
                and npc:Disposition(source) == D_LI
@@ -82,9 +83,11 @@ CAI.SafeHook("EntityEmitSound", "CAI_SoundIntel", function(t)
 
     local now = CurTime()
     src.CAI_LastSoundEvent = src.CAI_LastSoundEvent or 0
-    if now - src.CAI_LastSoundEvent < 0.4 then return end
+    local gate = 0.4
+    if src:IsNPC() and CAI.CVBool("cai_performance_mode") then gate = 0.8 end
+    if now - src.CAI_LastSoundEvent < gate then return end
     src.CAI_LastSoundEvent = now
-    SND.Emit(t.Pos or src:GetPos(), stype, radius, src:IsPlayer() and src or nil)
+    SND.Emit(t.Pos or src:GetPos(), stype, radius, src)
 end)
 
 CAI.SafeHook("PlayerFootstep", "CAI_Footsteps", function(ply, pos)
