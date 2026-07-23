@@ -2,13 +2,22 @@ CAI.Manager = CAI.Manager or {}
 local MG = CAI.Manager
 
 MG.NPCs = MG.NPCs or {}
+MG.List = MG.List or {}
+MG.ListIdx = MG.ListIdx or {}
+MG.Count = MG.Count or table.Count(MG.NPCs)
+if #MG.List == 0 and MG.Count > 0 then
+    for npc in pairs(MG.NPCs) do
+        MG.List[#MG.List + 1] = npc
+        MG.ListIdx[npc] = #MG.List
+    end
+end
 
 function MG.Get(npc) return MG.NPCs[npc] end
 function MG.All() return MG.NPCs end
 
 function MG.Register(npc)
     if not IsValid(npc) or MG.NPCs[npc] then return end
-    if table.Count(MG.NPCs) >= CAI.CVNum("cai_max_managed") then return end
+    if (MG.Count or 0) >= CAI.CVNum("cai_max_managed") then return end
     if not CAI.Config.NPCClasses[npc:GetClass()] then return end
 
     local classInfo = CAI.Config.NPCClasses[npc:GetClass()]
@@ -59,6 +68,9 @@ function MG.Register(npc)
         pcall(function() npc:SetKeyValue("squadname", "cai_solo_" .. npc:EntIndex()) end)
     end
     MG.NPCs[npc] = data
+    MG.Count = (MG.Count or 0) + 1
+    MG.List[#MG.List + 1] = npc
+    MG.ListIdx[npc] = #MG.List
 
     CAI.Nav.EnableDoorUse(npc)
     CAI.Squad.Place(npc)
@@ -67,8 +79,18 @@ function MG.Register(npc)
 end
 
 function MG.Unregister(npc)
+    local idx = MG.ListIdx[npc]
+    if idx then
+        local lastN = #MG.List
+        local lastEnt = MG.List[lastN]
+        MG.List[idx] = lastEnt
+        MG.List[lastN] = nil
+        if lastEnt ~= nil then MG.ListIdx[lastEnt] = idx end
+        MG.ListIdx[npc] = nil
+    end
     local data = MG.NPCs[npc]
     if not data then return end
+    MG.Count = math.max(0, (MG.Count or 1) - 1)
     if IsValid(data.suppBullseye) then data.suppBullseye:Remove() end
     if IsValid(data.flashlight) then data.flashlight:Remove() end
     if IsValid(data.flashglow) then data.flashglow:Remove() end
@@ -116,10 +138,17 @@ timer.Create("CAI_Scheduler", CAI.Config.ManagerTickRate, 0, function()
     local budget = CAI.Config.MaxBrainThinksPerTick
     if CAI.CVBool("cai_performance_mode") then budget = math.max(6, budget - 4) end
 
+    local list = MG.List
     local count = 0
-    for npc, data in pairs(MG.NPCs) do
-        if not IsValid(npc) then
-            MG.NPCs[npc] = nil
+    local steps = #list
+    MG.rr = MG.rr or 0
+    for _ = 1, steps do
+        if #list == 0 then break end
+        MG.rr = MG.rr % #list + 1
+        local npc = list[MG.rr]
+        local data = npc ~= nil and MG.NPCs[npc] or nil
+        if not IsValid(npc) or not data then
+            if npc ~= nil then MG.Unregister(npc) end
         elseif now >= data.nextThink then
             local t0 = SysTime()
             local dt = now - data.lastThink
@@ -142,7 +171,7 @@ timer.Create("CAI_Scheduler", CAI.Config.ManagerTickRate, 0, function()
             if count >= budget then break end
         end
     end
-    CAI.Perf.Stats.managed = table.Count(MG.NPCs)
+    CAI.Perf.Stats.managed = MG.Count or 0
     if _ts ~= 0 then CAI.Prof.Record("manager_scheduler", SysTime() - _ts) end
 end)
 

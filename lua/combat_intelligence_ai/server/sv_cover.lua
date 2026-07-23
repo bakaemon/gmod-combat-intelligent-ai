@@ -2,6 +2,7 @@ CAI.Cover = CAI.Cover or {}
 local CV = CAI.Cover
 
 local spotCache = {}
+local propSpotCache = {}
 local shadeCache = {}
 function CV.SpotShade(pos)
     local key = math.floor(pos.x / 64) .. ":" .. math.floor(pos.y / 64) .. ":" .. math.floor(pos.z / 64)
@@ -36,37 +37,51 @@ local function GatherSpots(origin, enemy, enemyPos)
         end
     end
 
-    for _, prop in ipairs(ents.FindInSphere(origin, cfg.SearchRadius)) do
-        if prop:GetClass() == "prop_physics" and IsValid(prop:GetPhysicsObject()) then
-            local mins, maxs = prop:OBBMins(), prop:OBBMaxs()
-            local size = (maxs - mins):Length()
-            if size > 70 then
-                local dir
-                if enemyPos then
-                    dir = prop:GetPos() - enemyPos
-                else
-                    dir = origin - prop:GetPos()
-                end
-                dir.z = 0
-                if dir:LengthSqr() < 1 then dir = Vector(1, 0, 0) end
-                dir:Normalize()
-                local off = size * 0.5 + 35
-                for _, ang in ipairs({ 0, 45, -45, 180 }) do
-                    local d = Angle(0, dir:Angle().y + ang, 0):Forward()
-                    local cand = CAI.Nav.SafeGround(prop:GetPos() + d * off)
-                    if cand and CAI.Nav.IsGroundSpot(cand) then out[#out + 1] = cand end
+    local pkey = math.floor(origin.x / 256) .. ":" .. math.floor(origin.y / 256)
+        .. ":" .. math.floor(origin.z / 256) .. (enemyPos and "e" or "")
+    local pc = propSpotCache[pkey]
+    if pc and CurTime() - pc.t < 3 then
+        for _, sp in ipairs(pc.spots) do out[#out + 1] = sp end
+    else
+        local pspots = {}
+        for _, prop in ipairs(ents.FindInSphere(origin, cfg.SearchRadius)) do
+            if prop:GetClass() == "prop_physics" and IsValid(prop:GetPhysicsObject()) then
+                local mins, maxs = prop:OBBMins(), prop:OBBMaxs()
+                local size = (maxs - mins):Length()
+                if size > 70 then
+                    local dir
+                    if enemyPos then
+                        dir = prop:GetPos() - enemyPos
+                    else
+                        dir = origin - prop:GetPos()
+                    end
+                    dir.z = 0
+                    if dir:LengthSqr() < 1 then dir = Vector(1, 0, 0) end
+                    dir:Normalize()
+                    local off = size * 0.5 + 35
+                    for _, ang in ipairs({ 0, 45, -45, 180 }) do
+                        local d = Angle(0, dir:Angle().y + ang, 0):Forward()
+                        local cand = CAI.Nav.SafeGround(prop:GetPos() + d * off)
+                        if cand and CAI.Nav.IsGroundSpot(cand) then pspots[#pspots + 1] = cand end
+                    end
                 end
             end
         end
+        if table.Count(propSpotCache) > 128 then propSpotCache = {} end
+        propSpotCache[pkey] = { spots = pspots, t = CurTime() }
+        for _, sp in ipairs(pspots) do out[#out + 1] = sp end
     end
 
-    if enemyPos then
+    if enemyPos and #out < 12 then
+        local perfMode = CAI.CVBool("cai_performance_mode")
+        local fanRadii = perfMode and { 200, 380 } or { 180, 300, 420 }
+        local fanStep = perfMode and 45 or 30
         local dirToEnemy = enemyPos - origin
         dirToEnemy.z = 0
         if dirToEnemy:LengthSqr() > 1 then
             dirToEnemy:Normalize()
-            for _, r in ipairs({ 180, 300, 420 }) do
-                for a = -150, 150, 30 do
+            for _, r in ipairs(fanRadii) do
+                for a = -150, 150, fanStep do
                     local ang = math.rad(a)
                     local rot = Vector(
                         dirToEnemy.x * math.cos(ang) - dirToEnemy.y * math.sin(ang),
