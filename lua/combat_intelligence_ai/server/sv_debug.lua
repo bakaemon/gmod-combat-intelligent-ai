@@ -28,6 +28,8 @@ timer.Create("CAI_DebugNet", 0.35, 0, function()
                 rows[#rows + 1] = {
                     idx = npc:EntIndex(),
                     state = data.state,
+                    phase = data.phase or 0,
+                    intent = data.phaseIntent or "",
                     role = data.role or 0,
                     morale = math.Round(data.morale),
                     supp = math.Round(data.suppression),
@@ -49,7 +51,8 @@ timer.Create("CAI_DebugNet", 0.35, 0, function()
             net.WriteUInt(#rows, 6)
             for _, r in ipairs(rows) do
                 net.WriteUInt(r.idx, 14)
-                net.WriteUInt(r.state, 5)
+                net.WriteUInt(r.phase, 3)
+                net.WriteString(r.intent)
                 net.WriteUInt(r.role, 4)
                 net.WriteUInt(r.morale, 7)
                 net.WriteUInt(r.supp, 7)
@@ -115,10 +118,10 @@ concommand.Add("cai_dump", function(ply)
     print("--- Per-NPC details ---")
     for npc, data in pairs(CAI.Manager.All()) do
         if IsValid(npc) then
-            local stateName = CAI.STATE_NAMES[data.state] or ("?" .. tostring(data.state))
-            local stateAge = math.Round(CurTime() - (data.stateSince or 0), 1)
+            local stateName = (CAI.PHASE_NAMES and CAI.PHASE_NAMES[data.phase]) or ("phase?" .. tostring(data.phase))
+            local stateAge = math.Round(CurTime() - (data.phaseSince or 0), 1)
             print(("-- %s [%s] idx=%d --"):format(npc:GetClass(), npc:GetModel() or "?", npc:EntIndex()))
-            print(("  state=%s (%.1fs) lastDecision=%s"):format(stateName, stateAge, data.lastDecision or "?"))
+            print(("  phase=%s (%.1fs) intent=%s lastDecision=%s"):format(stateName, stateAge, data.phaseIntent or "?", data.lastDecision or "?"))
             print(("  morale=%d suppression=%d fighting=%s"):format(
                 math.Round(data.morale), math.Round(data.suppression), tostring(data.fighting)))
             print(("  moveTarget=%s patrolAt=%s ago lastPatrol=%s"):format(

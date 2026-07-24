@@ -1,14 +1,11 @@
 local BR = CAI.Brain
 
--- COVER: find and hold a scored cover spot, reload from safety, and run a
--- duck/pop cycle (peek to shoot, duck when suppressed) to survive fire.
-BR.Exec[3] = function(data)
+BR.ExecPhase[CAI.PHASE.COVER] = function(data)
     local npc = data.ent
     local dangerAvoid = CAI.CVBool("cai_danger_avoid")
     local enemy, rec = BR.CombatTarget(data)
     local enemyPos = rec and rec.pos or (IsValid(enemy) and enemy:GetPos())
 
-    -- Refresh which cover spot currently shields us from the enemy.
     CAI.Cover.UpdateCoverStatus(data, enemy)
 
     if not data.cover then
@@ -32,7 +29,7 @@ BR.Exec[3] = function(data)
             data.coverSearchFailures = (data.coverSearchFailures or 0) + 1
             if data.coverSearchFailures >= 4 then
                 data.coverSearchFailures = 0
-                BR.SetState(data, CAI.STATE.ENGAGE, "no_cover_available")
+                data.planPending = "no_cover_available"
                 return
             end
             if CurTime() - (data.engCoverAt or 0) > 3 then
@@ -70,7 +67,7 @@ BR.Exec[3] = function(data)
             if not engaged and data.squad and IsValid(data.squad.leader) and data.squad.leader ~= npc
                and npc:GetPos():DistToSqr(data.squad.leader:GetPos()) > 900 * 900 then
                 data.cover = nil
-                CAI.Brain.SetState(data, CAI.STATE.REGROUP, "reloaded_regroup")
+                data.planPending = "reloaded_regroup"
                 return
             end
         end
@@ -86,9 +83,7 @@ BR.Exec[3] = function(data)
                 npc:SetSchedule(SCHED_TAKE_COVER_FROM_ENEMY)
             end
             if now > (data.coverPhaseEnd or 0) then data.coverPhase = nil end
-        -- Duck/pop cycle: when suppressed, duck (take cover), otherwise pop up to
-    -- shoot, then duck again on a timer. Prefires at remembered positions.
-    elseif now > (data.coverPhaseEnd or 0) then
+        elseif now > (data.coverPhaseEnd or 0) then
             if data.coverPhase == "pop" then
                 data.coverPhase = "duck"
                 data.coverPhaseEnd = now + math.Rand(1.0, 1.8) * (1.3 - aggro)

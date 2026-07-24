@@ -32,8 +32,7 @@ function MO.IsShaken(data) return CAI.CVBool("cai_morale") and data.morale < CAI
 
 function MO.Regen(data, dt)
     local base = CAI.Config.Morale.RegenPerTick
-    local rate
-    if data.state == CAI.STATE.IDLE or data.state == CAI.STATE.PATROL then
+    if CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT) then
         rate = base
     else
         rate = base * 0.35
@@ -85,18 +84,17 @@ CAI.SafeHook("OnNPCKilled", "CAI_MoraleDeaths", CAI.Prof.Wrap("morale_kill", fun
                    and CAI.Util.IsTargetable(attacker) then
                     CAI.Memory.HearEnemy(data, attacker, attacker:GetPos())
                 end
-                if data.state == CAI.STATE.IDLE or data.state == CAI.STATE.PATROL then
-                    data.investigatePos = deadPos
-                    data.investigateUntil = CurTime() + 10
-                    CAI.Brain.SetState(data, CAI.STATE.INVESTIGATE, "squadmate_down")
-                    if math.random() < 0.5 then CAI.Voice.Speak(data, "need_backup") end
+                if CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT) then
+                    data.planPending = "squadmate_down"
+                    data.plan.expiresAt = CurTime()
                 end
+                if math.random() < 0.5 then CAI.Voice.Speak(data, "need_backup") end
             elseif other:Disposition(npc) == D_HT and IsValid(attacker) and attacker == other then
-            MO.Add(data, cfg.KillConfirm, "kill")
-            CAI.Voice.Speak(data, "victory")
+                MO.Add(data, cfg.KillConfirm, "kill")
+                CAI.Voice.Speak(data, "victory")
+            end
         end
     end
-end
 end))
 
 CAI.SafeHook("EntityTakeDamage", "CAI_MoraleExplosions", CAI.Prof.Wrap("morale_explosion", function(target, dmg)

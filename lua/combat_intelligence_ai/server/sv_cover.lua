@@ -235,7 +235,8 @@ function CV.UpdateCoverStatus(data, enemy)
                 data.cover = { pos = newPos, since = CurTime() }
                 data.forceRecover = nil
                 CAI.Nav.MoveTo(data, newPos, "run")
-                CAI.Brain.SetState(data, CAI.STATE.COVER, "cover_blown_relocate")
+data.planPending = "cover_blown"
+data.plan.expiresAt = CurTime()
             end
         end
     else

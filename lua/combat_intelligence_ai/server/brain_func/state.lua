@@ -1,41 +1,46 @@
 local BR = CAI.Brain
 
--- SetState: transition helper. Only acts when the state actually changes, and
--- clears transient per-state fields so stale state never leaks across states.
-function BR.SetState(data, newState, reason)
-    if data.state == newState then
+function BR.SetPhase(data, newPhase, intent, reason, overrideCommitment)
+    if data.phase == newPhase and data.phaseIntent == intent then
         if reason then data.lastDecision = reason end
         return
     end
-    if CAI.CVBool("cai_debug_transitions") then
-        local role = CAI.ROLE_NAMES[data.role] or "?"
-        local want = CAI.CVStr("cai_debug_role")
-        if want == "" or want == role then
-            local npc = data.ent
-            local dur = CurTime() - (data.stateSince or 0)
-            local wep = npc.GetActiveWeapon and npc:GetActiveWeapon()
-            local clip = (IsValid(wep) and wep.Clip1) and wep:Clip1() or -1
-            local tdist = -1
-            local fenemy = npc.GetEnemy and npc:GetEnemy()
-            if IsValid(fenemy) then
-                tdist = math.Round(npc:GetPos():Distance(fenemy:GetPos()))
-            else
-                local fe = CAI.Memory.FreshestEnemy(data)
-                if IsValid(fe) then tdist = math.Round(npc:GetPos():Distance(fe:GetPos())) end
-            end
-            print(CAI.PrintPrefix .. ("[trans] %s idx=%d  %s(%.1fs) -> %s  reason=%s  td=%d | mor=%d sup=%d flank=%s brk=%s scat=%s clip=%d")
-                :format(role, npc:EntIndex(),
-                    CAI.STATE_NAMES[data.state] or data.state, dur,
-                    CAI.STATE_NAMES[newState] or newState,
-                    reason or "?", tdist,
-                    math.Round(data.morale or 0), math.Round(data.suppression or 0),
-                    data.flank and "Y" or "n", tostring(data.flankBreak),
-                    data.scatterUntil and CurTime() < data.scatterUntil and "Y" or "n",
-                    clip))
+
+    local committedUntil = data.plan and data.plan.committedUntil or 0
+    local urgency = data.reflex and data.reflex.urgency
+    local urgent = urgency == "urgent"
+    local attention = urgency == "attention"
+    local planPending = data.planPending
+    local planPendingStuck = planPending and (CurTime() - data.phaseSince > 0.5)
+
+    if not urgent and not attention and not planPendingStuck and not overrideCommitment then
+        if CurTime() < committedUntil then
+            return
         end
     end
-    data.prevState = data.state
-    data.state = newState
+
+    if attention and not urgent and not planPendingStuck and not overrideCommitment then
+        local elapsed = CurTime() - data.phaseSince
+        local total = committedUntil - data.phaseSince
+        if total > 0 and elapsed < total * 0.5 then
+            return
+        end
+    end
+
+    local oldPhaseSince = data.phaseSince or CurTime()
+    data.prevPhase = data.phase
+
+    data.phase = newPhase
+    data.phaseIntent = intent
+    data.phaseSince = CurTime()
+    if reason then data.lastDecision = reason end
+
+    local defDuration = CAI.Config.Plan.PhaseDuration[newPhase] or 1.5
+    local sunkCost = math.floor(CurTime() - oldPhaseSince) * 0.3
+    data.plan.committedUntil = CurTime() + defDuration + sunkCost
+    data.plan.expiresAt = data.plan.committedUntil
+    data.plan.reason = reason
+
     data.fighting = nil
     data.coverPhase = nil
     data.coverPhaseEnd = nil
@@ -45,19 +50,16 @@ function BR.SetState(data, newState, reason)
     data.retreatDest = nil
     data.ambush = nil
     data.meleePhase = nil
-    data.stateSince = CurTime()
-    if reason then data.lastDecision = reason end
     data.moveTarget = nil
     data.moveIssuedAt = nil
     data.patrolTarget = nil
-    -- Drop a stale cover spot when leaving COVER so the Flinch layer can't read
-    -- a far-away cover and wrongly decide we're already sheltered.
-    if newState ~= CAI.STATE.COVER then
+    if newPhase ~= CAI.PHASE.COVER then
         data.cover = nil
     end
-    if newState ~= CAI.STATE.PATROL then
-        data.patrolAt = CurTime()
-    end
+
+    data.planPending = nil
+
+    if data.reflex then data.reflex.urgency = nil end
 end
 
 BR.StopSuppressing = function(data)
@@ -122,5 +124,5 @@ end
 
 -- Think: one brain tick for a single NPC. Tick order:
 --   perceive -> fade memory -> decay suppression -> regen morale/proficiency
---   -> decide (state) -> execute (Exec[state]) -> prefire/bullseye cleanup.
+--   -> reflex -> OODA (decide) -> exec (ExecPhase[phase]) -> prefire/bullseye cleanup.
 -- Light-touch NPCs (e.g. hunters) only perceive + fade, skipping decisions.

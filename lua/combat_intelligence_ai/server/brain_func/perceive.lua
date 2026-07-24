@@ -22,7 +22,8 @@ BR.Perceive = function(data)
                 data.aimedSince = data.aimedSince or CurTime()
                 if CurTime() - data.aimedSince > 0.35 then
                     CAI.Memory.SeeEnemy(data, ply, ply:GetPos())
-                    if data.state == CAI.STATE.COVER and not data.forceRecover
+                    if CAI.PhaseIs(data, CAI.PHASE.COVER)
+                       and not data.forceRecover
                        and math.random() < 0.35 then
                         data.forceRecover = true
                     end

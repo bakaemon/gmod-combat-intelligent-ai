@@ -1,8 +1,5 @@
 local BR = CAI.Brain
-BR.COA = BR.COA or { PreTarget = {}, Target = {} }
 
--- Course of action: no visible enemy, but the squad is pushing/flanking into a
--- nearby friendly battle; commit to investigating it (or hold unknown angles).
 table.insert(BR.COA.Target, function(ctx)
     local data, npc, enemy = ctx.data, ctx.npc, ctx.enemy
     if IsValid(enemy) or not data.squad
@@ -29,11 +26,11 @@ table.insert(BR.COA.Target, function(ctx)
     end
     if helpScore > 0 and battlePos then
         local commitment = 0
-        if data.state == CAI.STATE.PATROL then
+        if CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "patrol") then
             commitment = 10
-        elseif data.state == CAI.STATE.IDLE then
+        elseif CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "idle") then
             commitment = 5
-        elseif data.state == CAI.STATE.COVER then
+        elseif CAI.PhaseIs(data, CAI.PHASE.COVER) then
             if data.suppression > CAI.Config.Suppression.PinnedAt then
                 commitment = 80
             elseif data.suppression > 30 then
@@ -41,9 +38,9 @@ table.insert(BR.COA.Target, function(ctx)
             else
                 commitment = 20
             end
-        elseif data.state == CAI.STATE.INVESTIGATE then
+        elseif CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "investigate") then
             commitment = 15
-        elseif data.state == CAI.STATE.SEARCH then
+        elseif CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "search") then
             commitment = 25
         else
             commitment = 60
@@ -56,26 +53,26 @@ table.insert(BR.COA.Target, function(ctx)
         if helpScore > commitment then
             if ctx.holdUnknown and not (data.wantBound and data.boundTarget)
                and not (data.squadPlan == "push" or data.squadPlan == "flank") then
-                return CAI.STATE.COVER, "await_reacquire"
+                return CAI.PHASE.COVER, "hold", 2, "await_reacquire"
             end
             data.investigatePos = battlePos
             data.investigateUntil = CurTime() + 15
-            return CAI.STATE.INVESTIGATE, "nearby_battle"
+            return CAI.PHASE.PRE_CONTACT, "investigate", 5, "nearby_battle"
         end
     end
 
     if data.reinforceTarget then
-        return CAI.STATE.REGROUP, "reinforcing"
+        return CAI.PHASE.WITHDRAW, "regroup", 4, "reinforcing"
     end
     if data.squad and IsValid(data.squad.leader) and data.squad.leader ~= npc
        and npc:GetPos():DistToSqr(data.squad.leader:GetPos()) > 1100 * 1100 then
-        return CAI.STATE.REGROUP, "rejoin_squad"
+        return CAI.PHASE.WITHDRAW, "regroup", 4, "rejoin_squad"
     end
     if data.investigatePos and CurTime() < (data.investigateUntil or 0) then
-        return CAI.STATE.INVESTIGATE, "heard_something"
+        return CAI.PHASE.PRE_CONTACT, "investigate", 5, "heard_something"
     end
     if data.squad and IsValid(data.squad.leader) and data.squad.leader ~= npc
        and npc:GetPos():DistToSqr(data.squad.leader:GetPos()) > 700 * 700 then
-        return CAI.STATE.REGROUP, "rejoin_squad"
+        return CAI.PHASE.WITHDRAW, "regroup", 4, "rejoin_squad"
     end
 end)

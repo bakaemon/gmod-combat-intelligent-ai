@@ -1,10 +1,126 @@
 local BR = CAI.Brain
 
--- ENGAGE: the core firefight loop, reposition to the weapon's ideal range and
--- fire, while staying friendly-fire aware. Handles melee-chase, point-blank
--- fighting, aggressive push/creep, kiting, and backing off when too close.
-BR.Exec[2] = function(data)
+BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
     local npc = data.ent
+
+    if data.phaseIntent == "suppress" then
+        local enemy, rec = BR.CombatTarget(data)
+        if not rec then
+            BR.StopSuppressing(data)
+            data.suppNoLosAt = nil
+            data.planPending = "nothing_to_suppress"
+            return
+        end
+
+        if IsValid(enemy) and npc:GetPos():DistToSqr(enemy:GetPos()) < 200 * 200 then
+            BR.StopSuppressing(data)
+            data.suppNoLosAt = nil
+            if npc.SetEnemy then npc:SetEnemy(enemy) end
+            data.planPending = "too_close_suppress"
+            return
+        end
+
+        if data.squad and IsValid(data.squad.leader) and data.squad.leader ~= npc then
+            local canFight = IsValid(enemy) and CAI.Util.Sees(npc, enemy)
+            if not canFight and npc:GetPos():DistToSqr(data.squad.leader:GetPos()) > 900 * 900 then
+                BR.StopSuppressing(data)
+                data.suppNoLosAt = nil
+                if npc.SetEnemy then npc:SetEnemy(NULL) end
+                CAI.Nav.MoveTo(data, data.squad.leader:GetPos(), "run")
+                return
+            end
+            data.moveTarget = nil
+            data.moveIssuedAt = nil
+        end
+
+        local now = CurTime()
+        if IsValid(enemy) and CAI.Util.Sees(npc, enemy) then
+            BR.StopSuppressing(data)
+            data.suppNoLosAt = now
+            if npc.SetEnemy then npc:SetEnemy(enemy) end
+            if npc.UpdateEnemyMemory then npc:UpdateEnemyMemory(enemy, rec.pos) end
+        else
+            if not data.suppNoLosAt then data.suppNoLosAt = now end
+            if now - data.suppNoLosAt > 8 then
+                BR.StopSuppressing(data)
+                data.suppressUntil = nil
+                data.suppNoLosAt = nil
+                CAI.Memory.SeeEnemy(data, enemy, rec.pos)
+                data.planPending = "suppress_no_los"
+                return
+            end
+            local aim
+            for _, b in ipairs(CAI.Cover.Barrels()) do
+                if IsValid(b) and b:GetPos():DistToSqr(rec.pos) < 170 * 170
+                   and CAI.Util.CanSeePos(npc, b:GetPos() + Vector(0, 0, 10)) then
+                    aim = b:GetPos() + Vector(0, 0, 10)
+                    break
+                end
+            end
+            for _, h in ipairs({ 55, 90 }) do
+                if aim then break end
+                local p = rec.pos + Vector(0, 0, h)
+                if CAI.Util.CanSeePos(npc, p) then aim = p break end
+            end
+            if not aim and CAI.CVBool("cai_wallbang") then
+                aim = rec.pos + Vector(0, 0, 55)
+            end
+            if not aim then
+                aim = rec.pos + Vector(0, 0, 40)
+            end
+            if aim then
+                local bull = data.suppBullseye
+                if not IsValid(bull) then
+                    bull = ents.Create("npc_bullseye")
+                    if IsValid(bull) then
+                        bull:SetPos(aim)
+                        bull:SetKeyValue("spawnflags", "196608")
+                        bull:Spawn()
+                        bull:SetNoDraw(true)
+                        bull:SetSolid(SOLID_NONE)
+                        bull:SetHealth(999999)
+                        data.suppBullseye = bull
+                        npc:AddEntityRelationship(bull, D_HT, 99)
+                    end
+                else
+                    bull:SetPos(aim)
+                end
+                if IsValid(bull) and npc.SetEnemy then
+                    npc:SetEnemy(bull)
+                    if npc.UpdateEnemyMemory then npc:UpdateEnemyMemory(bull, aim) end
+                end
+            else
+                if IsValid(enemy) and npc:GetPos():DistToSqr(enemy:GetPos()) < 400 * 400 then
+                    BR.StopSuppressing(data)
+                    if npc.SetEnemy then npc:SetEnemy(enemy) end
+                    data.planPending = "suppressed_no_target"
+                    return
+                end
+            end
+        end
+
+        if not data.suppFaced then
+            data.suppFaced = true
+            npc:SetSchedule(SCHED_COMBAT_FACE)
+        end
+        if not data.saidSuppress then
+            data.saidSuppress = true
+            CAI.Voice.Speak(data, "suppressing")
+            if data.squad then
+                local sa = data.squad.blackboard.suppressedAt
+                sa[#sa + 1] = { pos = rec.pos, t = CurTime() }
+                if #sa > 6 then table.remove(sa, 1) end
+                CAI.Squad.Broadcast(data.squad, "suppression_active", data.ent, { pos = rec.pos })
+            end
+        end
+        if not data.suppressUntil or CurTime() > data.suppressUntil then
+            data.saidSuppress = false
+            data.suppNoLosAt = nil
+            data.suppressUntil = nil
+            data.planPending = "suppress_done"
+        end
+        return
+    end
 
     local decision = data.lastDecision
     if CAI.WeaponIntel.IsMelee(npc)
@@ -31,8 +147,6 @@ BR.Exec[2] = function(data)
         return true
     end
     local dangerAvoid = CAI.CVBool("cai_danger_avoid")
-    -- safeDest: skip danger-avoidance when we can actually see the enemy
-    -- (advancing into a known kill zone is fine if we have eyes on target).
     local function safeDest(p)
         if not dangerAvoid or not p then return true end
         local e = npc:GetEnemy()
@@ -40,8 +154,6 @@ BR.Exec[2] = function(data)
         return not CAI.Memory.AvoidPos(data, p, CAI.Config.SelfPreserve.DangerAvoid.AdvanceIntoRadius)
     end
 
-    -- Melee chase: close in, prefire the swing before fully in reach, and keep
-    -- sidestepping between swings so we're never a standing target.
     if decision == "melee_chase" then
         local mcfg = CAI.Config.Melee
         local me, mrec = BR.CombatTarget(data)
@@ -56,8 +168,6 @@ BR.Exec[2] = function(data)
                     data.meleePhaseEnd = now + 0.1
                     return
                 end
-                -- Sidestep between swings so we're not a standing target.
-                -- In performance mode skip this step
                 if CAI.CVBool("cai_performance_mode") then
                     data.meleePhase = nil
                     return
@@ -120,8 +230,6 @@ BR.Exec[2] = function(data)
         return
     end
 
-    -- Melee ambush: hide in a dark spot near the enemy's position and pounce
-    -- when they wander close (or early if we've been spotted).
     if decision == "melee_ambush" then
         local mcfg = CAI.Config.Melee
         local acfg = mcfg.Ambush
@@ -130,7 +238,6 @@ BR.Exec[2] = function(data)
         local threat = (IsValid(me) and me:GetPos()) or (mrec and mrec.pos)
         if not threat then return end
 
-        -- Spring the trap when the enemy walks close, or early if we're spotted.
         local dSqr = IsValid(me) and npc:GetPos():DistToSqr(me:GetPos()) or math.huge
         local spotted = IsValid(me) and CAI.Util.CanSee(me, npc)
         if dSqr < acfg.PounceDist * acfg.PounceDist
@@ -143,7 +250,6 @@ BR.Exec[2] = function(data)
             return
         end
 
-        -- Pick / refresh a hiding spot, dark strongly preferred.
         if not data.ambush
            or now - data.ambush.since > acfg.MaxWait
            or threat:DistToSqr(data.ambush.threat) > acfg.RepickDist * acfg.RepickDist then
@@ -166,7 +272,6 @@ BR.Exec[2] = function(data)
             return
         end
 
-        -- In position: hold still and wait.
         if now - (data.ambushHoldAt or 0) > 2 then
             data.ambushHoldAt = now
             data.moveTarget = nil
@@ -252,8 +357,6 @@ BR.Exec[2] = function(data)
     if resp and resp.keepDistance then ideal = math.max(ideal, resp.idealDist or ideal) end
     local dist = npc:GetPos():Distance(enemy:GetPos())
 
-    -- Aggressive push: close the distance in bursts, fire on the move, then
-    -- creep forward when in ideal range, bail back if the enemy gets point-blank.
     if decision == "aggressive_push" then
         local pcfg = CAI.Config.Push
         local creepRange = ideal * pcfg.CreepMult
@@ -307,7 +410,6 @@ BR.Exec[2] = function(data)
         end
     end
 
-    -- Melee weapon: kite backward to keep the enemy at bay instead of closing.
     if resp == CAI.Config.WeaponResponses.melee then
         if dist < ideal * 0.95 then
             if now - (data.kiteAt or 0) > 1.2 then
@@ -322,11 +424,6 @@ BR.Exec[2] = function(data)
         CAI.FriendlyFire.Update(data)
     end
 
-    -- In the weapon's ideal band (or closer) with line of sight: hold position
-    -- and establish a line of fire (respecting squad fire-stagger so only some
-    -- shoot at once). This is the steady-state "gunfight" branch. The lower
-    -- bound is intentionally absent so a point-blank enemy is engaged in place
-    -- rather than backed away from.
     if dist <= maxRange and CAI.Util.Sees(npc, enemy) then
         data.moveTarget = nil
         local firing = false
@@ -369,9 +466,6 @@ BR.Exec[2] = function(data)
         return
     end
 
-    -- Too close but no line of sight: back off a touch to reopen a sightline.
-    -- When we can see the enemy this close we simply hold and fire (handled by
-    -- the steady-state branch above).
     if dist < CAI.Config.Engage.PointBlank and not CAI.Util.Sees(npc, enemy) then
         if now - (data.backoffAt or 0) > 3 then
             data.backoffAt = now

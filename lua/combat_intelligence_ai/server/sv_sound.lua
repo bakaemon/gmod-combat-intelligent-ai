@@ -42,7 +42,7 @@ function SND.Emit(pos, stype, radius, source)
                     CAI.Memory.AddSound(data, pos, "battle")
                 end
 
-                if data.state == CAI.STATE.IDLE or data.state == CAI.STATE.PATROL then
+                if CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT) then
                     local urgent = stype == "gunshot" or stype == "explosion" or stype == "glass"
                         or (stype == "footstep" and npc:GetPos():DistToSqr(pos) < 300 * 300)
                     local recent = data.lastInvestigate
@@ -50,7 +50,8 @@ function SND.Emit(pos, stype, radius, source)
                             and pos:DistToSqr(recent.pos) < 150 * 150) then
                         data.investigatePos = pos
                         data.investigateUntil = CurTime() + 12
-                        CAI.Brain.SetState(data, CAI.STATE.INVESTIGATE, "heard_" .. stype)
+                        data.planPending = "heard_" .. stype
+                        data.plan.expiresAt = CurTime()
                     end
                 end
             end

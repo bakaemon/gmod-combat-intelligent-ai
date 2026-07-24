@@ -5,6 +5,11 @@ function N.MoveTo(data, pos, mode)
     local npc = data.ent
     if not IsValid(npc) or not pos then return false end
 
+    -- Apply reflex bias
+    if data.reflex and data.reflex.bias then
+        pos = pos + data.reflex.bias
+    end
+
     local sched = mode == "walk" and SCHED_FORCED_GO or SCHED_FORCED_GO_RUN
     if data.moveTarget and data.moveTarget:DistToSqr(pos) < 48 * 48
        and CurTime() - (data.moveIssuedAt or 0) < 2

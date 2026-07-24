@@ -1,9 +1,7 @@
 local BR = CAI.Brain
-BR.COA = BR.COA or { PreTarget = {}, Target = {} }
 
--- Course of action: swarm / melee-encirclement. If crowded, point-blank, or
--- recently melee-hit, fight back (point-blank) or flee rather than standing still.
-table.insert(BR.COA.PreTarget, function(data, npc)
+table.insert(BR.COA.PreTarget, function(ctx)
+    local data, npc = ctx.data, ctx.npc
     local ownWep = npc.GetActiveWeapon and npc:GetActiveWeapon()
     if IsValid(ownWep) and not CAI.WeaponIntel.IsMelee(npc) then
         local ecfg = CAI.Config.Escape
@@ -14,9 +12,9 @@ table.insert(BR.COA.PreTarget, function(data, npc)
             data.pbEnemy = nearest
             local clipEmpty = ownWep.Clip1 and ownWep:Clip1() == 0
             if clipEmpty or CAI.Morale.RecentMeleeHits(data) >= ecfg.OverwhelmHits then
-                return CAI.STATE.RETREAT, "escape_encirclement"
+                return CAI.PHASE.WITHDRAW, "flee", 3, "escape_encirclement"
             end
-            return CAI.STATE.ENGAGE, "point_blank_fight"
+            return CAI.PHASE.ENGAGE, "point_blank", 2, "point_blank_fight"
         end
     end
 end)

@@ -1,23 +1,24 @@
 CAI.Config = CAI.Config or {}
 local C = CAI.Config
 
-CAI.STATE = {
-    IDLE = 0,
-    PATROL = 1,
-    ENGAGE = 2,
-    COVER = 3,
-    FLANK = 4,
-    SUPPRESS = 5,
-    SEARCH = 6,
-    RETREAT = 7,
-    INVESTIGATE = 8,
-    REGROUP = 9,
-    ROOM_CLEAR = 10,
-    BOUNDED = 11,
+CAI.PHASE = {
+    PRE_CONTACT = 0,
+    ASSESS      = 1,
+    ENGAGE      = 2,
+    MANEUVER    = 3,
+    COVER       = 4,
+    WITHDRAW    = 5,
+    POST_CONTACT = 6,
 }
 
-CAI.STATE_NAMES = {}
-for k, v in pairs(CAI.STATE) do CAI.STATE_NAMES[v] = k end
+CAI.PHASE_NAMES = {}
+for k, v in pairs(CAI.PHASE) do CAI.PHASE_NAMES[v] = k end
+
+function CAI.PhaseIs(data, phase, intent)
+    if data.phase ~= phase then return false end
+    if intent and data.phaseIntent ~= intent then return false end
+    return true
+end
 
 CAI.ROLE = {
     LEADER = 1,
@@ -548,6 +549,15 @@ C.Plan = {
     FlankMinMembers = 3,
     RetreatMoraleAvg = 30,
     PushAdvantage = 1.6,
+    PhaseDuration = {
+        [CAI.PHASE.PRE_CONTACT] = 4.5,
+        [CAI.PHASE.ASSESS] = 1.75,
+        [CAI.PHASE.ENGAGE] = 2.5,
+        [CAI.PHASE.MANEUVER] = 3.75,
+        [CAI.PHASE.COVER] = 2.25,
+        [CAI.PHASE.WITHDRAW] = 4.5,
+        [CAI.PHASE.POST_CONTACT] = 3,
+    },
 }
 
 C.LastVisGrace = 2.5

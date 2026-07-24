@@ -57,7 +57,8 @@ function T.Evaluate(data)
         npc:SetEnemy(NULL)
     end
 
-    if data.state == CAI.STATE.SUPPRESS and IsValid(data.suppBullseye) then
+    local suppressing = CAI.PhaseIs(data, CAI.PHASE.ENGAGE, "suppress")
+    if suppressing and IsValid(data.suppBullseye) then
         return best, bestRec
     end
 

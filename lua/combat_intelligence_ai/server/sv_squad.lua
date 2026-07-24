@@ -4,6 +4,11 @@ local SQ = CAI.Squad
 SQ.Squads = SQ.Squads or {}
 local nextID = 1
 
+local function planPending(data, reason)
+    data.planPending = reason
+    data.plan.expiresAt = CurTime()
+end
+
 local GROUP_RADIUS = 900
 
 function SQ.Create(faction)
@@ -133,14 +138,14 @@ end
 function SQ.OnComm(data, event, sender, payload)
     if event == "enemy_spotted" and payload then
         CAI.Memory.HearEnemy(data, payload.enemy, payload.pos)
-        if data.state == CAI.STATE.IDLE or data.state == CAI.STATE.PATROL then
-            CAI.Brain.SetState(data, CAI.STATE.COVER)
+        if CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "idle") or CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "patrol") then
+            planPending(data, "squad_cover")
         end
     elseif event == "taking_fire" or event == "need_backup" then
 
-        if IsValid(sender) and (data.state == CAI.STATE.IDLE or data.state == CAI.STATE.PATROL) then
+        if IsValid(sender) and (CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "idle") or CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "patrol")) then
             CAI.Nav.MoveTo(data, sender:GetPos(), "run")
-            CAI.Brain.SetState(data, CAI.STATE.REGROUP)
+            planPending(data, "squad_regroup")
         end
     elseif event == "grenade" or event == "rocket_spotted" then
         data.forceRecover = true
@@ -156,17 +161,18 @@ function SQ.OnComm(data, event, sender, payload)
     elseif event == "retreating" then
         CAI.Morale.Add(data, -4, "ally_retreating")
     elseif event == "need_help" and payload then
-        local st = data.state
-        local canAnswer = st == CAI.STATE.IDLE or st == CAI.STATE.PATROL
-            or st == CAI.STATE.SEARCH or st == CAI.STATE.REGROUP
+        local canAnswer = CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "idle")
+            or CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "patrol")
+            or CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "search")
+            or CAI.PhaseIs(data, CAI.PHASE.WITHDRAW, "regroup")
         if canAnswer and not data.flank
            and CurTime() - (data.helpRespondAt or 0) > 8 then
             data.helpRespondAt = CurTime()
             data.reinforceTarget = payload.pos
-            CAI.Brain.SetState(data, CAI.STATE.REGROUP, "help_request")
+            planPending(data, "squad_help")
         end
     elseif event == "suppression_active" and payload then
-        if data.role == CAI.ROLE.SUPPRESSOR and data.state == CAI.STATE.SUPPRESS then
+        if data.role == CAI.ROLE.SUPPRESSOR and CAI.PhaseIs(data, CAI.PHASE.ENGAGE, "suppress") then
             data.suppressUntil = math.max(data.suppressUntil or 0, CurTime() + 2)
         end
     elseif event == "flanking" and payload then
@@ -178,11 +184,11 @@ function SQ.OnComm(data, event, sender, payload)
             local npc = data.ent
             local dir = payload.direction
             local perp = Vector(-dir.y, dir.x, 0)
-            if data.state == CAI.STATE.PATROL or data.state == CAI.STATE.IDLE then
+            if CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "patrol") or CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "idle") then
                 local side = math.random() < 0.5 and 1 or -1
                 local dest = CAI.Nav.SafeOffset(npc:GetPos(), perp * side, 120)
                 if dest then CAI.Nav.MoveTo(data, dest, "walk") end
-            elseif data.state == CAI.STATE.ENGAGE or data.state == CAI.STATE.SUPPRESS then
+            elseif CAI.PhaseIs(data, CAI.PHASE.ENGAGE) or CAI.PhaseIs(data, CAI.PHASE.ENGAGE, "suppress") then
                 local enemy = payload.enemy
                 if IsValid(enemy) and CAI.Util.CanSee(npc, enemy) then
                     local myDir = (enemy:GetPos() - npc:GetPos()):GetNormalized()
@@ -201,8 +207,8 @@ function SQ.AnyoneEngaging(squad, self)
     for _, m in ipairs(squad.members) do
         if IsValid(m) and m ~= self then
             local d = CAI.Manager.Get(m)
-            if d and (d.state == CAI.STATE.ENGAGE or d.state == CAI.STATE.SUPPRESS or d.state == CAI.STATE.BOUNDED) then
-                if d.state == CAI.STATE.BOUNDED then return true end
+            if d and (CAI.PhaseIs(d, CAI.PHASE.ENGAGE) or CAI.PhaseIs(d, CAI.PHASE.ENGAGE, "suppress") or CAI.PhaseIs(d, CAI.PHASE.MANEUVER, "bound")) then
+                if CAI.PhaseIs(d, CAI.PHASE.MANEUVER, "bound") then return true end
                 if IsValid(m:GetEnemy()) and CAI.Util.Sees(m, m:GetEnemy()) then return true end
             end
         end
@@ -215,7 +221,7 @@ function SQ.Suppressing(squad, self)
     for _, m in ipairs(squad.members) do
         if IsValid(m) and m ~= self then
             local d = CAI.Manager.Get(m)
-            if d and d.state == CAI.STATE.SUPPRESS
+            if d and CAI.PhaseIs(d, CAI.PHASE.ENGAGE, "suppress")
                and (d.suppressUntil or 0) > CurTime() then
                 return true
             end
@@ -330,7 +336,7 @@ function SQ.Plan(squad)
 
     if IsValid(squad.leader) then
         local ld = CAI.Manager.Get(squad.leader)
-        if ld and ld.state == CAI.STATE.ENGAGE
+        if ld and CAI.PhaseIs(ld, CAI.PHASE.ENGAGE)
            and ld.lastDecision == "aggressive_push"
            and squad.plan ~= "retreat" then
             squad.plan = "push"

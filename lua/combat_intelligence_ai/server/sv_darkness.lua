@@ -98,7 +98,7 @@ timer.Create("CAI_NPCFlashlights", 0.5, 0, CAI.Prof.Wrap("darkness_flashlights",
                     local d = npc:GetPos():DistToSqr(ply:GetPos())
                     local light = PlayerLight(ply)
                     local lit = IsValid(data.flashlight)
-                    if d < 2200 * 2200 and data.state ~= CAI.STATE.IDLE then
+                    if d < 2200 * 2200 and (data.phase ~= CAI.PHASE.PRE_CONTACT or data.phaseIntent ~= "idle") then
                         if lit then
                             want = light < 0.45
                         else

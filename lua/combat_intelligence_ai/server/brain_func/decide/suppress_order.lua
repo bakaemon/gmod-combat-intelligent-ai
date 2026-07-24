@@ -1,0 +1,8 @@
+local BR = CAI.Brain
+
+table.insert(BR.COA.Target, function(ctx)
+    if not ctx.visible then return end
+    if ctx.data.suppressUntil and CurTime() < ctx.data.suppressUntil then
+        return CAI.PHASE.ENGAGE, "suppress", 3, "squad_suppress_order"
+    end
+end)
