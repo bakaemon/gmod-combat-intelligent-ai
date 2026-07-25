@@ -45,7 +45,13 @@ function SF.PlanPatrol(squad)
             if cand then
                 local safe = CAI.Nav.SafeGround(cand)
                 if safe then
-                    chosen, chosenKey = safe, CAI.Battlefield.PosKey(safe)
+                    local reachAreas = CAI.Nav.ReachableAreas(leaderPos)
+                    if reachAreas then
+                        local area = navmesh.GetNearestNavArea(safe)
+                        if IsValid(area) and reachAreas[area] then
+                            chosen, chosenKey = safe, CAI.Battlefield.PosKey(safe)
+                        end
+                    end
                 end
             end
         end
