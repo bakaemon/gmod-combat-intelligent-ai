@@ -1,6 +1,7 @@
 CAI.SpatialMap = CAI.SpatialMap or {}
 local SM = CAI.SpatialMap
 local B = CAI.Battlefield
+local CV = CAI.Cover
 
 local function posKey(pos)
     return math.floor(pos.x / 128) .. ":" .. math.floor(pos.y / 128)
@@ -271,6 +272,16 @@ function SM.Scan(squad)
             end
         end
     end
+
+    SM.ScanCover(squad)
+
+    local elapsed = CurTime() - sm.lastScan
+    local heatCfg = CAI.Config.Heatmap
+    for key, h in pairs(sm.heatmap) do
+        h.danger = math.max(0, h.danger - heatCfg.DecayRate * elapsed)
+        h.safety = math.max(0, h.safety - heatCfg.DecayRate * elapsed)
+        if h.danger < 1 and h.safety < 1 then sm.heatmap[key] = nil end
+    end
 end
 
 function SM.DiscoverDoorway(squad, pos, normal)
@@ -281,6 +292,120 @@ end
 function SM.DiscoverFlankRoute(squad, fromPos, toPos)
     if not squad then return end
     B.ReportFlankRoute(squad, fromPos, toPos, { fromPos, toPos })
+end
+
+local function heatKey(pos)
+    local cellSize = CAI.Config.Cover.CellSize
+    return math.floor(pos.x / cellSize) .. ":" .. math.floor(pos.y / cellSize)
+end
+
+function SM.RecordDanger(squad, pos, amount, radius)
+    if not squad then return end
+    local cfg = CAI.Config.Heatmap
+    radius = radius or cfg.RadiateRadius
+    local cellSize = CAI.Config.Cover.CellSize
+    local cellR = math.ceil(radius / cellSize)
+    local cx, cy = math.floor(pos.x / cellSize), math.floor(pos.y / cellSize)
+    local sm = squad.blackboard.spatialMap
+    for dx = -cellR, cellR do
+        for dy = -cellR, cellR do
+            local dist = math.sqrt(dx * dx + dy * dy) * cellSize + cellSize * 0.5
+            if dist <= radius then
+                local falloff = 1 - dist / radius
+                local key = (cx + dx) .. ":" .. (cy + dy)
+                local h = sm.heatmap[key]
+                if not h then
+                    h = { danger = 0, safety = 0, updatedAt = 0, lastDangerAt = 0 }
+                    sm.heatmap[key] = h
+                end
+                local a = amount or cfg.DangerIncrement
+                h.danger = h.danger + a * falloff
+                h.updatedAt = CurTime()
+                if dist < cellSize * 0.5 then h.lastDangerAt = CurTime() end
+            end
+        end
+    end
+end
+
+function SM.RecordSafety(squad, pos, amount, radius)
+    if not squad then return end
+    local cfg = CAI.Config.Heatmap
+    radius = radius or cfg.RadiateRadius
+    local cellSize = CAI.Config.Cover.CellSize
+    local cellR = math.ceil(radius / cellSize)
+    local cx, cy = math.floor(pos.x / cellSize), math.floor(pos.y / cellSize)
+    local sm = squad.blackboard.spatialMap
+    for dx = -cellR, cellR do
+        for dy = -cellR, cellR do
+            local dist = math.sqrt(dx * dx + dy * dy) * cellSize + cellSize * 0.5
+            if dist <= radius then
+                local falloff = 1 - dist / radius
+                local key = (cx + dx) .. ":" .. (cy + dy)
+                local h = sm.heatmap[key]
+                if not h then
+                    h = { danger = 0, safety = 0, updatedAt = 0, lastDangerAt = 0 }
+                    sm.heatmap[key] = h
+                end
+                local a = amount or cfg.SafetyIncrement
+                h.safety = h.safety + a * falloff
+                h.updatedAt = CurTime()
+            end
+        end
+    end
+end
+
+function SM.QueryHeat(squad, pos)
+    if not squad then return 0 end
+    local cellSize = CAI.Config.Cover.CellSize
+    local key = math.floor(pos.x / cellSize) .. ":" .. math.floor(pos.y / cellSize)
+    local h = squad.blackboard.spatialMap.heatmap[key]
+    if not h then return 0 end
+    return h.safety - h.danger
+end
+
+local coverScanCounters = {}
+function SM.ScanCover(squad)
+    if not squad then return end
+    local sm = squad.blackboard.spatialMap
+    local now = CurTime()
+    local cfg = CAI.Config.Cover
+    local budget = cfg.ScanBudget
+    local key = tostring(squad)
+    local sc = coverScanCounters[key]
+    if not sc then sc = { idx = 0, phase = 0 }; coverScanCounters[key] = sc end
+    sc.phase = sc.phase + 1
+    if sc.phase < 2 then return end
+    sc.phase = 0
+
+    local leader = squad.leader
+    if not IsValid(leader) then return end
+    local leaderPos = leader:GetPos()
+    local spots = CV.GatherSpots and CV.GatherSpots(leaderPos, nil, nil)
+    if not spots or #spots == 0 then return end
+    local startIdx = sc.idx
+    local step = math.max(1, math.floor(#spots / budget))
+    local cellSize = cfg.CellSize
+    for i = startIdx + 1, math.min(startIdx + budget, #spots) do
+        local sp = spots[i]
+        local gk = math.floor(sp.x / cellSize) .. ":" .. math.floor(sp.y / cellSize)
+        if not sm.cover[gk] then sm.cover[gk] = {} end
+        if #sm.cover[gk] < cfg.MaxPerCell then
+            local blocked = CAI.Util.CanSeePos(leader, sp + Vector(0, 0, 40))
+            local weight = blocked and 0 or 3.0
+            sm.cover[gk][#sm.cover[gk] + 1] = { pos = sp, weight = weight, validatedAt = now }
+        end
+    end
+    sc.idx = (startIdx + budget) % math.max(#spots, 1)
+
+    for gk, entries in pairs(sm.cover) do
+        local fresh = {}
+        for _, e in ipairs(entries) do
+            if now - e.validatedAt < cfg.MapTTL then
+                fresh[#fresh + 1] = e
+            end
+        end
+        if #fresh > 0 then sm.cover[gk] = fresh else sm.cover[gk] = nil end
+    end
 end
 
 timer.Create("CAI_SpatialMapScan", 1.0, 0, function()

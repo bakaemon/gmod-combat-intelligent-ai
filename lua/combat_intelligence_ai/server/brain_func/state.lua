@@ -53,6 +53,11 @@ function BR.SetPhase(data, newPhase, intent, reason, overrideCommitment)
     data.moveTarget = nil
     data.moveIssuedAt = nil
     data.patrolTarget = nil
+    data._pushCover = nil
+    data._pushCoverPhase = nil
+    data._pushCoverAt = nil
+    data._pushPeekUntil = nil
+    data._pushHops = nil
     if newPhase ~= CAI.PHASE.COVER then
         data.cover = nil
     end

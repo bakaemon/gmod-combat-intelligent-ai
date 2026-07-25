@@ -98,6 +98,7 @@ local function GatherSpots(origin, enemy, enemyPos)
 
     return out
 end
+CV.GatherSpots = GatherSpots
 
 function CV.ScoreSpot(data, spot, enemy, enemyPos)
     local cfg = CAI.Config.Cover
@@ -261,6 +262,49 @@ function CV.Barrels()
         end
     end
     return barrels
+end
+
+function CV.QueryNearby(data, origin, radius, opts)
+    local squad = data.squad
+    if not squad or not origin then return nil end
+    local sm = squad.blackboard.spatialMap
+    local cellSize = CAI.Config.Cover.CellSize
+    local cellR = math.ceil((radius or 500) / cellSize)
+    local cx, cy = math.floor(origin.x / cellSize), math.floor(origin.y / cellSize)
+    local best, bestScore = nil, math.huge
+    local enemy = data.ent:GetEnemy()
+    for dx = -cellR, cellR do
+        for dy = -cellR, cellR do
+            local key = (cx + dx) .. ":" .. (cy + dy)
+            local entries = sm.cover[key]
+            if entries then
+                for _, e in ipairs(entries) do
+                    local dist = e.pos:DistToSqr(origin)
+                    if dist < radius * radius then
+                        local heatKey = math.floor(e.pos.x / cellSize) .. ":" .. math.floor(e.pos.y / cellSize)
+                        local h = sm.heatmap[heatKey]
+                        local netHeat = h and (h.safety - h.danger) or 0
+                        if netHeat >= -CAI.Config.Heatmap.DangerThreshold then
+                            local score = dist
+                            if e.weight > 0 then score = score * (1 + e.weight * 0.5) end
+                            if score < bestScore then best, bestScore = e.pos, score end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if best and IsValid(enemy) then
+        local tr = util.TraceLine({
+            start = enemy:GetPos() + Vector(0, 0, 36),
+            endpos = best + Vector(0, 0, 40),
+            mask = MASK_SHOT,
+            filter = { data.ent, enemy },
+        })
+        if tr.Hit then return best end
+        return nil
+    end
+    return best
 end
 
 CAI.Prof.WrapFn(CV, "FindBest", "cover_findbest")

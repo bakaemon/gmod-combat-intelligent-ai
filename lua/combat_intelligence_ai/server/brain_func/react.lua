@@ -27,9 +27,9 @@ local C = CAI.Config
     react.lua: the Reflex layer (OODA mode)
 
     Evade is modelled here as a LOW-LEVEL DEFENSIVE RULE, not a brain state.
-    It runs every tick AFTER the state machine (see think.lua) and only ever
-    biases MOVEMENT — it never calls SetPhase, so it cannot interrupt
-    phases.
+    It runs every tick BEFORE the state machine (see think.lua) and may
+    issue MOVEMENT via N.ReflexMove (which calls N.MoveTo when the NPC has
+    no active destination, or stores a bias vector otherwise).
 
     Design rules:
       * It follows the plan's intent; it never changes the phase or the plan's

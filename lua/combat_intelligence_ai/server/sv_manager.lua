@@ -94,6 +94,7 @@ function MG.Register(npc)
 
     CAI.Nav.EnableDoorUse(npc)
     CAI.Squad.Place(npc)
+    CAI.FireAim.Alloc(data)
 
     npc:CallOnRemove("CAI_Unregister", function() MG.Unregister(npc) end)
 end
@@ -112,6 +113,7 @@ function MG.Unregister(npc)
     if not data then return end
     MG.Count = math.max(0, (MG.Count or 1) - 1)
     CAI.FireAim.Stop(data)
+    if IsValid(data.suppBullseye) then data.suppBullseye:Remove() end
     if IsValid(data.flashlight) then data.flashlight:Remove() end
     if IsValid(data.flashglow) then data.flashglow:Remove() end
     if data.squad then CAI.Squad.RemoveMember(data.squad, npc) end

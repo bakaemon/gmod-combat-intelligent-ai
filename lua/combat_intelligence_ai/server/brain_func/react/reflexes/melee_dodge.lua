@@ -17,6 +17,7 @@ table.insert(BR.ReflexHandlers, function(data, dt)
     away.z = 0
     if away:LengthSqr() <= 1 then return end
 
-    local biasVec = away:GetNormalized() * 350
+    local awayPos = src + away:GetNormalized() * 350
+    local biasVec = CAI.Nav.ReflexMove(data, awayPos)
     return biasVec, "urgent"
 end)

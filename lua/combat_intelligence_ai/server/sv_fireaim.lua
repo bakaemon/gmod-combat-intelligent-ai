@@ -1,24 +1,28 @@
 local BR = CAI.Brain
 
 CAI.FireAim = {}
+local VOID_POS = Vector(0, 0, -16000)
+
+function CAI.FireAim.Alloc(data)
+    local bull = ents.Create("npc_bullseye")
+    if not IsValid(bull) then return end
+    bull:SetPos(VOID_POS)
+    bull:SetKeyValue("spawnflags", "196608")
+    bull:Spawn()
+    bull:SetNoDraw(true)
+    bull:SetSolid(SOLID_NONE)
+    bull:SetHealth(999999)
+    data.suppBullseye = bull
+    local npc = data.ent
+    if IsValid(npc) then npc:AddEntityRelationship(bull, D_HT, 99) end
+end
 
 function CAI.FireAim.Aim(data, pos, ttl)
     local npc = data.ent
     local bull = data.suppBullseye
-    if not IsValid(bull) then
-        bull = ents.Create("npc_bullseye")
-        if not IsValid(bull) then return end
-        bull:SetPos(pos)
-        bull:SetKeyValue("spawnflags", "196608")
-        bull:Spawn()
-        bull:SetNoDraw(true)
-        bull:SetSolid(SOLID_NONE)
-        bull:SetHealth(999999)
-        data.suppBullseye = bull
-        npc:AddEntityRelationship(bull, D_HT, 99)
-    else
-        bull:SetPos(pos)
-    end
+    if not IsValid(bull) then return end
+
+    bull:SetPos(pos)
     if npc.SetEnemy then
         npc:SetEnemy(bull)
         if npc.UpdateEnemyMemory and npc:GetEnemy() == bull then
@@ -33,37 +37,38 @@ function CAI.FireAim.Aim(data, pos, ttl)
 end
 
 function CAI.FireAim.Stop(data)
-    if IsValid(data.suppBullseye) then
-        local npc = data.ent
-        if IsValid(npc) and npc.GetEnemy and npc:GetEnemy() == data.suppBullseye then
-            npc:SetEnemy(NULL)
-        end
-        data.suppBullseye:Remove()
+    local bull = data.suppBullseye
+    if not IsValid(bull) then return end
+
+    local npc = data.ent
+    if IsValid(npc) and npc.GetEnemy and npc:GetEnemy() == bull then
+        npc:SetEnemy(NULL)
     end
-    data.suppBullseye = nil
+    bull:SetPos(VOID_POS)
     data._fireAimUntil = nil
 end
 
 function CAI.FireAim.ClearEnemy(data)
     local npc = data.ent
-    if IsValid(npc) and data.suppBullseye and npc:GetEnemy() == data.suppBullseye then
+    local bull = data.suppBullseye
+    if IsValid(npc) and IsValid(bull) and npc:GetEnemy() == bull then
         npc:SetEnemy(NULL)
     end
 end
 
 function CAI.FireAim.Tick(data)
-    if not data.suppBullseye then return end
+    local bull = data.suppBullseye
+    if not IsValid(bull) then return end
 
     if data._fireAimUntil then
         if CurTime() > data._fireAimUntil then
             local npc = data.ent
             if IsValid(npc) then
                 local e = npc:GetEnemy()
-                if e == data.suppBullseye then
+                if e == bull then
                     CAI.FireAim.Stop(data)
                 else
-                    data.suppBullseye:Remove()
-                    data.suppBullseye = nil
+                    bull:SetPos(VOID_POS)
                     data._fireAimUntil = nil
                 end
             else

@@ -1,574 +1,305 @@
-# Squad Architecture Overhaul
+# Plan: Cover Map + Bullseye Pre-Spawn + Reflex Abstraction
 
-## Principle
+## Overview
 
-Replace the current per-NPC independent decision-making with a **squad-first** architecture. Individual COAs are subordinate to squad orders. Spatial memory, patrol routing, and tactical planning become squad-level concerns, not per-NPC.
+Four architectural changes to fix performance issues and enable emergent tactical behavior:
 
-The decision pipeline becomes:
-
-```
-SquadOrder (role-based) → PreTarget (emergency) → Target (individual)
-```
-
-Squad orders fire **without** requiring `ctx.visible` — squad flags already encode intent from the squad planner.
+1. **Pre-spawned bullseye per NPC** — Eliminate entity create/destroy churn and the "LastKnownPosition" engine error spike
+2. **Spatial cover map** — Squad-interval pre-computed cover positions for fast nearest-cover queries (jink, push)
+3. **Reflex movement abstraction** — `N.ReflexMove()` helper that decides "bias existing movement" vs "create new movement"; preserves existing `BR.Reflex` bias-accumulation pattern
+4. **Cover-waypoint push pipeline** — Aggressive push advances between cover spots instead of straight-line
 
 ---
 
-## Audit: Current Squad Infrastructure
+## Part A: Pre-Spawned Bullseye (Per-NPC)
 
-### What exists already (in sv_squad.lua)
+### Problem
+- `CAI.FireAim.Aim()` creates `npc_bullseye` on first call, removes it on `Stop()`
+- Create/destroy churns entity list; TTL expiry window causes "Asking LastKnownPosition for enemy that's not in my memory!!" engine error (stale engine pointer race)
 
-| Function | Purpose | Migrate? |
-|----------|---------|----------|
-| `SQ.Create` | Squad table factory | Keep |
-| `SQ.AddMember` / `SQ.RemoveMember` | Membership management | Keep |
-| `SQ.Place` | Auto-place NPC into nearest squad | Keep |
-| `SQ.AssignRoles` | Role assignment (LEADER, SUPPRESSOR, etc.) | Keep |
-| `SQ.Broadcast` / `SQ.OnComm` | Squad comms system | Keep |
-| `SQ.AnyoneEngaging` / `SQ.Suppressing` | Squad-level state queries | Keep |
-| `SQ.FormationSlot` | Formation-relative position from leader | Keep |
-| `SQ.UpdateFormation` | Formation type (WEDGE/LINE/etc) selection | Keep |
-| `SQ.Plan` | Tactical planner (push/flank/hold/retreat) | **Migrate to squad_func/plan.lua** |
+### Solution
+- Pre-spawn one bullseye at `MG.Register()` time, store in `data.suppBullseye`
+- `Aim()`: teleport to target pos + `SetEnemy(bull)` — no more create branch
+- `Stop()`: teleport to void (`Vector(0,0,-16000)`) + `SetEnemy(NULL)` — **entity persists**
+- `MG.Unregister()`: `data.suppBullseye:Remove()` (only actual destroy)
+- `SF_BULLSEYE_NPC_EXEMPT` flag (196608, already set) prevents engine re-acquisition of the void-pos bullseye
 
-### What's broken
-
-1. **COA priority**: Squad orders (`suppress_order.lua`, `flank_order.lua`, `bound_order.lua`, `separated.lua`) are in the Target list AFTER `engage_target.lua`. They never fire when an enemy is visible because `engage_target` wins first. All 4 also require `ctx.visible` — making them doubly unreachable.
-
-2. **Minimal ctx in ooda.lua**: The `ctx` table passed to COAs is:
-   ```lua
-   { data, npc, enemy, rec, visible }
-   ```
-   Missing: `holdUnknown`, `dangerAvoid`, `squadCovering` — 3 COA files reference these as nil.
-
-3. **No squad patrol**: `exec/pre_contact.lua` picks random patrol points per NPC. Squad members wander independently with only loose de-clumping.
-
-4. **No formation during combat**: `FormationSlot` is only used in `exec/withdraw.lua:regroup`. No combat exec handler maintains formation spacing.
-
-5. **All squad logic in one file**: `sv_squad.lua` is 471 lines mixing membership, comms, planning, and formation. No module boundary.
+### Files
+| File | Changes |
+|------|---------|
+| `sv_manager.lua` | `MG.Register`: call `CAI.FireAim.Alloc(data)`; `MG.Unregister`: call `data.suppBullseye:Remove()` |
+| `sv_fireaim.lua` | New `CAI.FireAim.Alloc(data)` creates bullseye at void pos; `Aim()`: teleport-only (remove create-branch); `Stop()`: teleport to void + `SetEnemy(NULL)` (no `Remove()`) |
 
 ---
 
-## New Module: `squad_func/`
+## Part B: Spatial Cover Map (Squad-Interval Pre-Compute)
 
-```
-server/squad_func/
-  init.lua        — namespace CAI.SquadFunc, loader
-  plan.lua        — tactical planner (replaces SQ.Plan logic)
-  patrol.lua      — squad patrol planner (single objective + formation routing)
-  formation.lua   — formation state, spacing checks, slot calculation
-  spatial.lua     — squad-shared spatial memory (merged enemy positions)
-```
+### Problem
+- `CAI.Cover.FindBest()` does full gather + 10-weight scoring per call (~1.5ms)
+- Jink reflex calls `FindBest` every tick (cached in `data._reflexCover` — never cleared, stale)
+- Jink needs a *nearby* cover spot fast, not the global optimum
 
-### squad_func/init.lua
+### Solution
+- New `SM.ScanCover(squad)` function: gathers cover candidates around squad AO using its **own independent budget** (separate from the nav-area chokepoint/high-ground/doorway scan)
+- Runs every **2nd** spatial-map tick (0.5Hz instead of 1Hz) to keep overhead low
+- Stores in `squad.blackboard.spatialMap.cover[gridKey]`: `{ pos, weight, validatedAt }`
+- Simplified 4-weight scoring: LOS-blocked, distance-from-NPC, crowd penalty, danger-zone penalty — skip flank/escape/history/dark
+- `gridKey` uses `CAI.Config.Cover.CellSize` (128u); MaxPerCell = 6
+- TTL 8s, stale entries evicted on each scan
+- `CV.QueryNearby(data, origin, radius, opts)` reads spatial map, returns nearest valid spot. Falls back to away-from-enemy bias if no cover entries found yet (squad's first scan hasn't completed within 1-2s of spawn)
+- Config: `C.Cover.CellSize = 128`, `C.Cover.MapTTL = 8`, `C.Cover.MaxPerCell = 6`, `C.Cover.NearbyRadius = 500`, `C.Cover.ScanBudget = 10`
 
-```lua
-CAI.SquadFunc = CAI.SquadFunc or {}
-local SF = CAI.SquadFunc
-```
+### Squad Safety Heatmap (validation foundation)
 
-Called from `sv_brain.lua` (or a new loader). Defines the namespace, then includes submodules.
+The spatial cover map is paired with a **radiating safety heatmap** on the squad blackboard to collectively validate whether **areas** are safe or dangerous. Instead of marking individual spots, each event radiates heat outward with falloff, creating a continuous danger gradient.
 
-### squad_func/plan.lua — Tactical planner
-
-Replaces `SQ.Plan`'s decision body (lines 274-460 of sv_squad.lua). Runs every 0.5s timer like the current `SQ.Plan`.
-
-**Logic moved over verbatim** from `SQ.Plan`:
-- Battlefield pruning
-- Role assignment (calls `SQ.AssignRoles`)
-- Enemy count / morale / ammo / injured aggregation
-- Squad plan selection: retreat / hold / push / flank / regroup
-- Per-member flag setting: `suppressUntil`, `wantFlank`, `wantBound`, `squadPlan`
-- Fire-team / maneuver-team bound target computation
-- Stagger offset
-
-**Changes from current SQ.Plan:**
-- After computing `squad.plan`, also set a `squad.objectivePos` field — the squad's collective movement target (last known enemy position, patrol objective, etc.)
-- Store `squad.lastContactPos` — where the squad last had enemy contact (for patrol routing)
-
-### squad_func/patrol.lua — Squad patrol planner
-
-New module. Runs per-squad when all members are in PRE_CONTACT (no combat).
-
-**Objective selection (every 0.5s timer):**
-```
-If squad has a patrol objective and it hasn't been reached:
-  → keep current objective
-Else:
-  → pick a new objective from CAI.Battlefield.GetPatrolPoints(squad, leaderPos, RADIUS)
-  → if none found, pick a random nav point within RADIUS of leader
-  → if still none, fall back to current leader position (hold formation)
-```
-
-**Per-member routing:**
-- The squad patrol planner sets `squad.patrolPos` and `squad.patrolKey`
-- Each member's OODA reads `squad.patrolPos` via `ctx` (if in PRE_CONTACT and not searching/investigating)
-- Leader: moves to `squad.patrolPos` directly
-- Followers: compute their formation slot relative to leader's current position + formation-relative offset toward patrol objective
-
-**exec/pre_contact.lua changes:**
-- When in a squad with an active patrol objective AND the NPC is a follower:
-  - Compute `FormationSlot(squad, idx)` relative to leader
-  - `MoveTo(formationSlot, "walk")`
-- Leader uses the squad patrol objective as patrol target
-- When not in a squad: keep current independent patrol logic
-
-### squad_func/formation.lua — Formation state
-
-Migrates `SQ.FormationSlot` and `SQ.UpdateFormation` logic from sv_squad.lua. Adds:
-
-**PositionSpacing check:**
-```lua
-function SF.PositionSpacing(data, pos, minDist)
-    local squad = data.squad
-    if not squad then return true end
-    for _, m in ipairs(squad.members) do
-        if IsValid(m) and m ~= data.ent then
-            if m:GetPos():DistToSqr(pos) < minDist * minDist then
-                return false  -- too close to another member
-            end
-        end
-    end
-    return true
-end
-```
-
-**FormationCheck helper:** Returns true if NPC is >FormationBreakRadius from ALL squad members (cohesion check):
+**Data structure** (per grid cell, same `gridKey` as cover map):
 
 ```lua
-function SF.FormationCheck(data)
-    local squad = data.squad
-    if not squad or #squad.members <= 1 then return true end
-    local radius = CAI.Config.SquadTactics.FormationBreakRadius or 600
-    local radiusSq = radius * radius
-    for _, m in ipairs(squad.members) do
-        if IsValid(m) and m ~= data.ent then
-            if data.ent:GetPos():DistToSqr(m:GetPos()) < radiusSq then
-                return true  -- at least one squadmate within range
-            end
-        end
-    end
-    return false  -- isolated
-end
-```
-
-Called from exec handlers (bound, direct_fire) every OODA tick. When false, the NPC sets `planPending` to force a re-plan that SquadOrder's `separated` will catch.
-
-**SquadCenterOfMass helper:**
-```lua
-function SF.SquadCenterOfMass(squad, filterSelf, maxDist)
-    local count, acc = 0, Vector()
-    for _, m in ipairs(squad.members) do
-        if IsValid(m) and (not filterSelf or m ~= filterSelf) then
-            local d = maxDist and filterSelf and filterSelf:GetPos():DistToSqr(m:GetPos()) or 0
-            if not maxDist or d < maxDist * maxDist then
-                acc = acc + m:GetPos()
-                count = count + 1
-            end
-        end
-    end
-    if count == 0 then return nil end
-    return acc / count
-end
-```
-
-**Clustering prevention for exec handlers:**
-- `exec/engage.lua`: At end of direct_fire path, if in a squad and another member is within 200 units, nudge sideways
-- `exec/cover.lua`: When picking cover, reject positions too close to other squad members; prefer positions within mutual support range (200-500 units of at least one ally)
-
-### squad_func/spatial.lua — Squad-shared spatial memory
-
-**Squad enemy map merge:**
-- Each think tick (or every 0.5s via the squad timer), each NPC writes its freshest enemy position to a shared map on the squad object:
-  ```lua
-  if not squad.sharedEnemies then squad.sharedEnemies = {} end
-  local enemy, rec = CAI.Memory.FreshestEnemy(data)
-  if rec then
-      squad.sharedEnemies[data.ent] = { pos = rec.pos, t = CurTime(), enemy = enemy }
-  end
-  ```
-- `CAI.SquadFunc.FreshestEnemy(squad)` returns the most recent shared enemy across all members
-- NPCs can read `squad.sharedEnemies` for zero-latency enemy sharing
-
-**Integration:**
-- `CAI.Target.Evaluate` could prefer squad-shared enemy over individual memory
-- `ooda.lua` ctx could include `squadEnemy = SF.FreshestEnemy(squad)`
-
-This is optional/lowest-priority — the existing comms-based sharing works with latency. Mark as **Phase 2** if desired.
-
----
-
-## COA Architecture Changes
-
-### New evaluation order
-
-```lua
--- ooda.lua
-local phase, intent, duration, reason
-
--- 1. SquadOrder (role-based, highest priority)
-for _, coa in ipairs(BR.COA.OODA.SquadOrder) do
-    phase, intent, duration, reason = coa(ctx)
-    if phase then break end
-end
-
--- 2. PreTarget (emergency, needs squad override override)
-if not phase then
-    for _, coa in ipairs(BR.COA.OODA.PreTarget) do
-        phase, intent, duration, reason = coa(ctx)
-        if phase then break end
-    end
-end
-
--- 3. Target (individual decision)
-if not phase then
-    for _, coa in ipairs(BR.COA.OODA.Target) do
-        phase, intent, duration, reason = coa(ctx)
-        if phase then break end
-    end
-end
-```
-
-### SquadOrder COA channel
-
-New channel in `decide.lua`:
-
-```lua
-BR.COA.OODA.SquadOrder = {}
-
-include(DIR .. "suppress_order.lua")  -- now inserts into SquadOrder
-include(DIR .. "flank_order.lua")     -- now inserts into SquadOrder
-include(DIR .. "bound_order.lua")     -- now inserts into SquadOrder
-include(DIR .. "separated.lua")       -- now inserts into SquadOrder
-```
-
-### SquadOrder COA changes
-
-Each of the 4 files changes from `table.insert(BR.COA.Target, ...)` to `table.insert(BR.COA.SquadOrder, ...)` **and removes the `ctx.visible` guard:**
-
-**suppress_order.lua:**
-```lua
-table.insert(BR.COA.SquadOrder, function(ctx)
-    if ctx.data.suppressUntil and CurTime() < ctx.data.suppressUntil then
-        return CAI.PHASE.ENGAGE, "suppress", 3, "squad_suppress_order"
-    end
-end)
-```
-
-**flank_order.lua:**
-```lua
-table.insert(BR.COA.SquadOrder, function(ctx)
-    if ctx.data.wantFlank then
-        ctx.data.wantFlank = nil
-        return CAI.PHASE.MANEUVER, "flank", 4, "squad_flank_order"
-    end
-end)
-```
-
-**bound_order.lua:**
-```lua
-table.insert(BR.COA.SquadOrder, function(ctx)
-    if ctx.data.wantBound and ctx.data.boundTarget then
-        ctx.data.wantBound = nil
-        return CAI.PHASE.MANEUVER, "bound", 3, "squad_bound_order"
-    end
-end)
-```
-
-**separated.lua:**
-```lua
-table.insert(BR.COA.SquadOrder, function(ctx)
-    local data, npc = ctx.data, ctx.npc
-    if not data.squad or not IsValid(data.squad.leader) then return end
-    if data.squad.leader == npc or data.role == CAI.ROLE.FLANKER then return end
-    local radius = CAI.Config.SquadTactics.FormationBreakRadius or 600
-    if npc:GetPos():DistToSqr(data.squad.leader:GetPos()) <= radius * radius then return end
-    -- Don't regroup if actively engaging a nearby enemy
-    local enemyRange = ctx.enemy and npc:GetPos():Distance(ctx.enemy:GetPos()) or math.huge
-    if enemyRange <= CAI.WeaponIntel.OwnRange(npc) then return end
-    return CAI.PHASE.WITHDRAW, "regroup", 4, "separated_from_squad"
-end)
-```
-
-### Target COA list (reduced)
-
-After removing the 4 squad files, the Target list is:
-
-```lua
-include(DIR .. "pinned.lua")
-include(DIR .. "engage_target.lua")
-include(DIR .. "lost_target_coa.lua")
-include(DIR .. "squad_aware.lua")
-include(DIR .. "pre_contact.lua")
-```
-
-### PreTarget (unchanged)
-
-```lua
-include(DIR .. "flank_protect.lua")
-include(DIR .. "melee_threat.lua")
-include(DIR .. "morale_break.lua")
-include(DIR .. "panic.lua")
-include(DIR .. "room_clear_coa.lua")
-```
-
-### Richer ctx for all COAs
-
-```lua
-local ctx = {
-    data = data, npc = npc,
-    enemy = enemy, rec = rec, visible = visible,
-    holdUnknown = CAI.CVBool("cai_hold_unknown"),
-    dangerAvoid = CAI.CVBool("cai_danger_avoid"),
-    squadCovering = data.squad and function()
-        return CAI.Squad.AnyoneEngaging(data.squad, npc)
-            or CAI.Squad.Suppressing(data.squad, npc)
-    end or function() return false end,
+squad.blackboard.heatmap[gridKey] = {
+    danger = n,        -- accumulated danger heat
+    safety = n,        -- accumulated safety heat from safe occupation
+    updatedAt = t,     -- last time either value changed
+    lastDangerAt = t,  -- last time danger was incremented at epicenter (for future corner-sweep)
 }
 ```
 
-Note: `squadCovering` creates a new closure each OODA tick. Acceptable for now — optimize only if profiling shows overhead.
-
----
-
-## Exec Handler Changes
-
-### exec/pre_contact.lua (patrol only)
-
-When in a squad with an active patrol objective, REPLACE individual patrol logic:
+**RecordDanger — radiates outward from origin:**
 
 ```lua
-local squad = data.squad
-if intent == "patrol" and squad and squad.patrolPos then
-    if npc == squad.leader then
-        -- Leader moves to patrol objective
-        if data.moveTarget and not CAI.Nav.Arrived(data, 80) then return end
-        CAI.Nav.MoveTo(data, squad.patrolPos, "walk")
-    else
-        -- Follower computes formation slot relative to leader
-        local idx = CAI.SquadFunc.SquadIndex(squad, npc)
-        local slot = idx and CAI.Squad.FormationSlot(squad, idx)
-        if slot then
-            CAI.Nav.MoveTo(data, slot, "walk")
-        end
-    end
-    return
-end
-```
-
-When NOT in squad or no squad patrolPos: use current independent patrol logic.
-
-### exec/engage.lua (formation spacing)
-
-At the end of the `direct_fire` path (after line ~510, before returning), add:
-
-```lua
--- Squad spacing: avoid clustering
-if data.squad then
-    local minDist = CAI.Config.SquadTactics.MinSpacing or 150
-    for _, m in ipairs(data.squad.members) do
-        if IsValid(m) and m ~= npc then
-            local dSq = npc:GetPos():DistToSqr(m:GetPos())
-            if dSq < minDist * minDist then
-                local away = (npc:GetPos() - m:GetPos()):GetNormalized()
-                local dest = CAI.Nav.SafeOffset(npc:GetPos(), away, minDist)
-                if dest then CAI.Nav.MoveTo(data, dest, "run") end
-                break
+function SM.RecordDanger(squad, pos, amount, radius)
+    radius = radius or C.Heatmap.RadiateRadius
+    local cellSize = C.Cover.CellSize
+    local cellR = math.ceil(radius / cellSize)
+    local cx, cy = math.floor(pos.x / cellSize), math.floor(pos.y / cellSize)
+    for dx = -cellR, cellR do
+        for dy = -cellR, cellR do
+            local dist = (math.sqrt(dx*dx + dy*dy) * cellSize) + cellSize * 0.5
+            if dist <= radius then
+                local falloff = 1 - dist / radius
+                local sm = squad.blackboard.spatialMap
+                local key = (cx + dx) .. ":" .. (cy + dy)
+                local h = sm.heatmap[key]
+                if not h then h = { danger = 0, safety = 0, updatedAt = 0, lastDangerAt = 0 }; sm.heatmap[key] = h end
+                h.danger = h.danger + amount * falloff
+                h.updatedAt = CurTime()
+                if dist < cellSize * 0.5 then h.lastDangerAt = CurTime() end
             end
         end
     end
 end
 ```
 
-### exec/withdraw.lua (squad-aware retreat)
+`RecordSafety` uses the same radiating pattern — credited cover at position X radiates safety outward so nearby spots also benefit.
 
-Replace the individual `awayFromEnemies()` helper with a squad-aware direction that blends away-from-enemies with toward-allies:
+**When danger is incremented:**
+- Cover compromised: `exec/cover.lua` → `UpdateCoverStatus` → `Battlefield.MarkCover(pos, false)` → calls `SM.RecordDanger(squad, pos)`
+- Jink reflex: only when the NPC is NOT at a safe cover position and creates movement (not when holding position). Reports the fired-upon position into the heatmap.
+
+**When safety is incremented:**
+- Cover credited: `UpdateCoverStatus` (6s safe occupation without exposure) → `Battlefield.MarkCover(pos, true)` → calls `SM.RecordSafety(squad, pos)`
+
+**Decay: additive.** Every spatial map scan tick, using time since last scan as delta:
 
 ```lua
-local function retreatDirection(data, npc)
-    -- Push away from all known enemies (existing logic)
-    local push = Vector()
-    for ent, rec in pairs(data.memory.enemies) do
-        if IsValid(ent) and CAI.Util.Alive(ent) and rec.pos then
-            local v = npc:GetPos() - rec.pos
-            v.z = 0
-            local len = v:Length()
-            if len > 1 then push = push + v * (1 / len) end
-        end
-    end
-    push.z = 0
-
-    -- Pull toward squad center of mass
-    local pull = Vector()
-    local center = data.squad and CAI.SquadFunc.SquadCenterOfMass(data.squad, npc, 2000)
-    if center then
-        pull = center - npc:GetPos()
-        pull.z = 0
-    end
-
-    -- Blend: 70% away from enemies, 30% toward allies
-    local combined
-    if push:LengthSqr() > 1 then
-        push:Normalize()
-        if pull:LengthSqr() > 1 then
-            pull:Normalize()
-            combined = push * 0.7 + pull * 0.3
-        else
-            combined = push
-        end
-    elseif pull:LengthSqr() > 1 then
-        combined = pull
-    else
-        return nil
-    end
-    combined.z = 0
-    return combined:GetNormalized()
+local elapsed = CurTime() - sm.lastScan  -- time since last scan (~5s)
+for key, h in pairs(sm.heatmap) do
+    h.danger = math.max(0, h.danger - C.Heatmap.DecayRate * elapsed)
+    h.safety = math.max(0, h.safety - C.Heatmap.DecayRate * elapsed)
+    if h.danger < 1 and h.safety < 1 then sm.heatmap[key] = nil end
 end
 ```
 
-Replace all calls to `awayFromEnemies(data, npc)` with `retreatDirection(data, npc)` throughout `withdraw.lua`. The fallback escape direction (line 80-83) and `safeRetreat` validation already work with any direction vector — no other changes needed.
+Additive decay preserves `lastDangerAt` as a meaningful signal until danger fully decays — needed for future corner-sweep.
 
-**Regroup during retreat** — when in a squad and no immediate enemy threat, the existing `regroup` intent (line 213) already uses `FormationSlot` for squad-relative positioning. No change needed.
+**Integration with QueryNearby:**
+`CV.QueryNearby` reads the heatmap cell for each cover candidate and factors `netHeat = safety - danger` into the score. Candidates in cells with `netHeat < -C.Heatmap.DangerThreshold` are deprioritized or skipped. Single O(1) lookup per candidate.
 
-### exec/maneuver.lua (formation cohesion during bound)
-
-During bound movement, the maneuver team drifts laterally while fire team suppresses. Without a formation check, bounders can isolate 400+ units from squad — easy picking.
-
-**Bound path** (line 148-189), check formation cohesion before each movement tick:
+**SM.QueryHeat — per-tick position safety check for jink gate:**
 
 ```lua
-if data.phaseIntent == "bound" then
-    -- Formation cohesion: abort bound if isolated from squad
-    if data.squad and not CAI.SquadFunc.FormationCheck(data) then
-        data.boundTarget = nil
-        data.boundArrived = nil
-        data.planPending = "bound_too_far"
-        return
-    end
-    -- ... rest of existing bound logic ...
-```
-
-When `FormationCheck` returns false (no squadmate within `FormationBreakRadius`), the bound target is cleared and `planPending` triggers a re-plan on the next OODA cycle. SquadOrder's `separated` then catches the NPC and issues `WITHDRAW/regroup`.
-
-**Flank path** (line 102-146) intentionally deviates from formation — flankers are exempt. The 25s stale timer already bounds maximum separation. No cohesion check needed.
-
-### exec/cover.lua (squad-aware cover)
-
-**Spacing rejection** (after `FindBest` returns, before accepting cover):
-
-```lua
-if pos and data.squad then
-    for _, m in ipairs(data.squad.members) do
-        if IsValid(m) and m ~= npc and npc:GetPos():DistToSqr(m:GetPos()) < 150 * 150 then
-            pos = nil  -- too close to squadmate, find different cover
-            break
-        end
-    end
+function SM.QueryHeat(squad, pos)
+    local cellSize = C.Cover.CellSize
+    local key = math.floor(pos.x / cellSize) .. ":" .. math.floor(pos.y / cellSize)
+    local h = squad.blackboard.spatialMap.heatmap[key]
+    if not h then return 0 end
+    return h.safety - h.danger
 end
 ```
 
-**Mutual support preference** — after spacing rejection, if pos is accepted but far from all squad members, try to nudge toward squad center:
+Called from the jink reflex once per tick when the NPC is at a cover position. Returns `0` (no data) or `safety - danger` (positive = safe, negative = dangerous).
+
+**Config** (`sh_config.lua`):
 
 ```lua
-if pos and data.squad and #data.squad.members > 1 then
-    local closest = math.huge
-    local center = CAI.SquadFunc.SquadCenterOfMass(data.squad, npc)
-    for _, m in ipairs(data.squad.members) do
-        if IsValid(m) and m ~= npc then
-            local d = pos:DistToSqr(m:GetPos())
-            if d < closest then closest = d end
-        end
-    end
-    -- If no squadmate within 600 units, nudge cover toward squad center
-    if closest > 600 * 600 and center then
-        local dir = (center - pos):GetNormalized()
-        dir.z = 0
-        local nudged = CAI.Nav.SafeOffset(pos, dir, 300)
-        if nudged then pos = nudged end
-    end
-end
+C.Heatmap = {
+    DangerIncrement = 10,    -- per compromise or jink event
+    SafetyIncrement = 5,     -- per 6s safe occupation
+    RadiateRadius = 200,     -- how far danger/safety radiates from origin
+    DecayRate = 2,           -- per second, additive decay
+    DangerThreshold = 15,    -- netHeat below this → skip candidate
+}
 ```
 
----
-
-## File Manifest
-
-### New files (5)
-
-| File | Lines | What it does |
-|------|-------|-------------|
-| `server/squad_func/init.lua` | ~15 | Namespace declaration, submodule loader |
-| `server/squad_func/plan.lua` | ~200 | Tactical planner (migrated from SQ.Plan logic) |
-| `server/squad_func/patrol.lua` | ~100 | Squad patrol objective planner + formation routing |
-| `server/squad_func/formation.lua` | ~60 | Formation slot, update, spacing checks |
-| `server/squad_func/spatial.lua` | ~80 | Squad-shared enemy map merge (Phase 2) |
-
-### Modified files (12)
-
+### Files
 | File | Changes |
 |------|---------|
-| `sv_brain.lua` | Add `include` for `squad_func/init.lua` |
-| `sv_squad.lua` | Remove `SQ.Plan` body, `SQ.FormationSlot`, `SQ.UpdateFormation` logic. Update timer (line 462) to call `CAI.SquadFunc.Plan(squad)`. Remove or redirect `Prof.WrapFn(SQ, "Plan")` |
-| `decide.lua` | Add `BR.COA.OODA.SquadOrder = {}`, include 4 squad COAs in SquadOrder, remaining Target reduced |
-| `ooda.lua` | Add SquadOrder iteration loop, enrich ctx with `holdUnknown`, `dangerAvoid`, `squadCovering` |
-| `suppress_order.lua` | Change `Target` → `SquadOrder`, remove `ctx.visible` guard |
-| `flank_order.lua` | Change `Target` → `SquadOrder`, remove `ctx.visible` guard |
-| `bound_order.lua` | Change `Target` → `SquadOrder`, remove `ctx.visible` guard |
-| `separated.lua` | Change `Target` → `SquadOrder`, remove `ctx.visible` guard |
-| `exec/pre_contact.lua` | Add squad patrol branch (formation-keeping) |
-| `exec/engage.lua` | Add squad clustering check + formation cohesion abort at end of direct_fire |
-| `exec/maneuver.lua` | Add formation cohesion check during bound — abort if isolated from squad, triggers re-plan |
-| `exec/withdraw.lua` | Replace `awayFromEnemies()` with squad-aware `retreatDirection()` blending away-from-enemies + toward-allies |
-| `exec/cover.lua` | Add squad spacing rejection + mutual support range preference in cover selection |
-| `squad_func/plan.lua` | Compute `squadIndex` for each member during plan tick (alongside role assignment) so formation slot lookup is O(1) |
-| `squad_func/formation.lua` | Add `FormationCheck`, `SquadCenterOfMass`, `PositionSpacing` helpers for cohesion |
-
-### Configuration additions
-
-In `sh_config.lua`, add fields to the existing `C.SquadTactics` table (line 581):
-
-```lua
-    MinSpacing = 150,              -- minimum distance between squad members in combat
-    PatrolFormation = true,        -- enable formation-keeping during patrol
-    FormationBreakRadius = 600,    -- max distance from nearest squadmate before considered isolated; triggers regroup
-```
+| `sv_spatialmap.lua` | Add `SM.ScanCover(squad)` with its own `coverScanIdx`/`coverBudget` iteration; called from `SM.Scan` every 2nd tick; add `SM.RecordDanger`, `SM.RecordSafety`, `SM.QueryHeat` heatmap functions with decay on scan |
+| `sv_cover.lua` | Add `CV.QueryNearby(data, origin, radius, opts)` reading spatial cover map + heatmap score |
+| `sh_config.lua` | Add `C.Cover.CellSize`, `C.Cover.MapTTL`, `C.Cover.MaxPerCell`, `C.Cover.NearbyRadius`; add `C.Heatmap` block |
+| `sv_battlefield.lua` | Add danger-increment call in `MarkCover(pos, false)` path; add safety-increment call in `MarkCover(pos, true)` path |
 
 ---
 
-## Migration Steps
+## Part C: Abstracted Reflex Movement
 
-### Step 1: Create squad_func/ module files
-1. `squad_func/init.lua` — namespace + loader
-2. `squad_func/plan.lua` — migrate SQ.Plan body
-3. `squad_func/patrol.lua` — new squad patrol planner
-4. `squad_func/formation.lua` — migrate SF.FormationSlot + UpdateFormation, add SpacingCheck
-5. `squad_func/spatial.lua` — shared enemy map (Phase 2, skip for now)
+### Problem
+- Three reflexes (jink, grenade_dodge, melee_dodge) return `(biasVec, urgency)`
+- `data.reflex.bias` only consumed by `N.MoveTo()` — never called during suppress → jink bias dead
+- Decision "bias vs. create new movement" scattered across handlers
 
-### Step 2: Modify ooda.lua + decide.lua
-6. Add SquadOrder channel to decide.lua COA tables
-7. Add SquadOrder iteration loop to ooda.lua
-8. Enrich ctx table with holdUnknown, dangerAvoid, squadCovering
+### Solution
+- **`sv_navigation.lua`**: Add `N.ReflexMove(data, pos, mode)` — returns `biasVec` or `nil`:
+  ```lua
+  function N.ReflexMove(data, pos, mode)
+      -- If NPC has no active destination: create movement, no bias
+      -- If NPC has active destination: compute bias toward pos
+      -- Returns: biasVec (for BR.Reflex to accumulate) or nil
+  end
+  ```
+- **`BR.Reflex` stays as-is** (accumulates bias from all handlers, sets `data.reflex.bias`). No change to the accumulation pattern.
+- Each reflex handler calls `N.ReflexMove` to get its biasVec, then returns `(biasVec, urgency)` as before:
+  - `suppression_jink.lua` with heatmap evaluation gate:
+    ```
+    if sup <= UnderFireAt → return
 
-### Step 3: Rewrite 4 squad COAs
-9. suppres_order.lua → SquadOrder, remove visible guard
-10. flank_order.lua → SquadOrder, remove visible guard
-11. bound_order.lua → SquadOrder, remove visible guard
-12. separated.lua → SquadOrder, remove visible guard
+    if at cover (data.cover or _pushCoverPhase == "peek"):
+        netHeat = SM.QueryHeat(squad, npcPos)
+        if netHeat >= -threshold:
+            → Cover safe, hold. Return nil, urgency. No RecordDanger.
+        else:
+            → Cover hot, flee. CV.QueryNearby → N.ReflexMove → RecordDanger(src)
 
-### Step 4: Update exec handlers
-13. exec/pre_contact.lua — add squad patrol formation branch
-14. exec/engage.lua — add clustering check + formation cohesion abort
-15. exec/maneuver.lua — add formation cohesion check during bound (abort if isolated)
-16. exec/withdraw.lua — replace `awayFromEnemies()` with `retreatDirection()` (blends away-from-enemies + toward-allies via SquadCenterOfMass)
-17. exec/cover.lua — add spacing rejection + mutual support range preference
+    else (moving or standing):
+        CV.QueryNearby → N.ReflexMove → RecordDanger(src)
 
-### Step 5: Clean up sv_squad.lua
-18. Remove `SQ.Plan` body (lines 274-460), update timer to call `CAI.SquadFunc.Plan(squad)`, update/remove `CAI.Prof.WrapFn(SQ, "Plan")`
-19. Remove `SQ.FormationSlot` (lines 233-242) and `SQ.UpdateFormation` (lines 244-272) — migrated to squad_func/formation.lua
-20. Keep `SQ.Create`, `SQ.AddMember`, `SQ.RemoveMember`, `SQ.Place`, `SQ.AssignRoles`, `SQ.Broadcast`, `SQ.OnComm`, `SQ.AnyoneEngaging`, `SQ.Suppressing`
+    return biasVec, urgency
+    ```
+  - `grenade_dodge.lua`: compute away pos → `N.ReflexMove` → return `(biasVec, urgency)`
+  - `melee_dodge.lua`: compute away pos → `N.ReflexMove` → return `(biasVec, urgency)`
+- **Comment fix** in `react.lua`: outdated `-- only biases MOVEMENT` → reflexes CAN call `N.ReflexMove` which may call `N.MoveTo`, but never change phase/destination
 
-### Step 6: Add squadIndex to plan tick
-21. In `CAI.SquadFunc.Plan`, after `SQ.AssignRoles(squad)`, iterate members and set `data.squadIndex = i` so formation slot lookup is O(1) without re-scanning `squad.members`
+### Bias-accumulation safety
+`N.ReflexMove` does **not** mutate `data.reflex.bias` directly. It returns a fresh vector. `BR.Reflex` accumulates all returned vectors (same as now). Each tick `BR.Reflex` starts with `Vector(0,0,0)` so there is no stale accumulation across ticks.
 
-### Step 7: Syntax check + smoke test
-22. `luac5.1 -p` on all changed files
-23. Manual smoke test: spawn 4 NPCs of same faction, verify they patrol in formation, respond to squad orders, maintain spacing, bounders abort and regroup if isolated, retreating NPCs move toward squad center
+### Files
+| File | Changes |
+|------|---------|
+| `sv_navigation.lua` | Add `N.ReflexMove(data, pos, mode)` returns biasVec or nil |
+| `react.lua` | Update doc comment only (reflex CAN issue movement via `N.ReflexMove`) |
+| `suppression_jink.lua` | Full rewrite: use `CV.QueryNearby` + `N.ReflexMove`; remove `data._reflexCover` |
+| `grenade_dodge.lua` | Rewrite: compute away pos → `N.ReflexMove` |
+| `melee_dodge.lua` | Rewrite: compute away pos → `N.ReflexMove` |
+
+---
+
+## Part D: Cover-Waypoint Push Pipeline
+
+### Problem
+- `aggressive_push` advances in straight line toward enemy, ignores cover
+- No bounding between cover spots during push — NPCs are predictable and exposed
+- Existing timing (`pushBurstAt`, `pushAt`, `fireUntil`, `creepAt`) manages burst-fire-and-move cycles but has no spatial awareness
+
+### Solution
+Modify `engage.lua` `aggressive_push` block (lines 361-412) with three cover-waypoint phases, controlled by `data._pushCoverPhase`:
+
+```
+1. "acquire" — NPC has no current cover waypoint
+   Query CV.QueryNearby(data, npc:GetPos(), 600, { towardEnemy = true })
+   If cover found nearer to enemy than NPC:
+     set data._pushCover = coverPos
+     set data._pushCoverPhase = "move"
+     N.MoveTo(data, coverPos, "run")
+   If no cover found:
+     fall through to existing straight-line advance (old behavior)
+
+2. "move" — NPC is moving toward cover waypoint
+   On arrival (N.Arrived(data, 80)):
+     set data._pushCoverPhase = "peek"
+     data._pushPeekUntil = CurTime() + BurstDuration (1.2s)
+     FireSchedule or Prefire (peek-shoot)
+   While moving:
+     same as old "creep" logic — fire burst if visible, keep advancing
+
+3. "peek" — NPC is firing from cover
+   When CurTime() > _pushPeekUntil:
+     set data._pushCoverPhase = "acquire" (find next cover)
+   Danger avoid or taking fire → early exit peek, re-duck to cover
+
+Fallback: if _pushCoverPhase is nil (not set) or _pushCover is nil → existing
+straight-line advance code runs unchanged. This preserves all old behavior.
+```
+
+Key integration points with existing code:
+- `pushBurstAt` / `pushAt` timers only consulted during "move" phase (when NPC is between cover spots, not arriving at cover)
+- `fireUntil` respected during all phases
+- `tryMoveShoot()` only called when no cover waypoint available (fallback)
+- Max 3 cover hops (`data._pushHops`) before forcing direct advance to prevent stalls
+- `data._pushCover`, `data._pushCoverPhase`, `data._pushCoverAt`, `data._pushPeekUntil`, `data._pushHops` cleared in `BR.SetPhase` (add to the clearance list in `state.lua`)
+
+### Files
+| File | Changes |
+|------|---------|
+| `engage.lua` | Refactor `aggressive_push` lines 361-412 to use cover-waypoint pipeline |
+| `state.lua` | Add `_pushCover`, `_pushCoverPhase`, `_pushCoverAt`, `_pushPeekUntil`, `_pushHops` to `BR.SetPhase` clearance |
+
+---
+
+## Implementation Order
+
+| Step | What | Files |
+|------|------|-------|
+| 1 | Bullseye pre-spawn | `sv_manager.lua`, `sv_fireaim.lua` |
+| 2 | Spatial cover map + heatmap + QueryNearby | `sv_spatialmap.lua`, `sv_cover.lua`, `sv_battlefield.lua`, `sh_config.lua` |
+| 3 | `N.ReflexMove` | `sv_navigation.lua` |
+| 4 | Rewrite 3 reflexes | `suppression_jink.lua`, `grenade_dodge.lua`, `melee_dodge.lua` |
+| 5 | Comment fix in react.lua | `react.lua` |
+| 6 | Cover-waypoint push | `engage.lua`, `state.lua` |
+
+Steps 3-4-5 can be done in one batch since they form a single cohesive change (reflex movement).
+
+---
+
+## Testing Checkpoints
+
+1. **Bullseye**: Spawn 10 NPCs, engage in combat — verify no bullseye create/destroy in console (only 10 bullseyes total). Verify `Tick` teleports to void when suppression ends.
+
+2. **Cover map**: Start squad combat, watch `CV.QueryNearby` return valid positions. Profile: jink tick cost should drop from ~1.5ms (full `FindBest`) to ~0.1ms (spatial map lookup).
+
+3. **Reflex move**: NPC under suppression without destination → moves to cover. NPC with active move target → biases toward cover. Grenade/melee dodge triggers movement when stationary.
+
+4. **Push pipeline**: Squad with advantage pushes → NPCs bound between cover spots visible in navmesh debug (`nav_edit 1`). After 3 cover hops, NPC falls back to direct advance.
+
+---
+
+## Risks & Mitigations
+
+| Risk | Mitigation |
+|------|------------|
+| Pre-spawned bullseye re-acquired by engine | `SF_BULLSEYE_NPC_EXEMPT` flag prevents auto-acquisition; `ClearEnemy` + void pos ensures no valid target |
+| Spatial cover map stale | 8s TTL + per-scan LOS validation; `QueryNearby` falls back to away-from-enemy bias |
+| Heatmap gradient decays but feedback loop is slow | Jink reports danger on every evasion tick; compromise path is immediate; additive decay prevents signal loss between scans |
+| `N.ReflexMove` + `BR.Reflex` bias double-counting | `N.ReflexMove` returns a vector, never mutates `data.reflex.bias`; `BR.Reflex` resets to `Vector(0,0,0)` each tick |
+| Push waypoint stall (NPC stuck between covers) | Max 3 hops (`_pushHops`), then direct-advance fallback; `data._pushCoverPhase` prevents re-query mid-move |
+| Push phase-cleared fields missing in SetPhase | Add all new `_push*` fields to the clearance list in `state.lua:44-62` |
+
+---
+
+## Backwards Compatibility
+
+- `CAI.Cover.FindBest()` unchanged — still used by `exec/cover.lua` for active cover selection (not by reflexes)
+- `CAI.FireAim.Aim/Stop/ClearEnemy` signatures unchanged
+- Reflex handler signature unchanged: `(data, dt) -> (biasVec, urgency)`
+- `BR.Reflex` unchanged (still accumulates bias, sets `data.reflex.bias`)
+- No new phases or OODA changes
+- `aggressive_push` fallback preserves all old straight-line logic when no cover waypoints found

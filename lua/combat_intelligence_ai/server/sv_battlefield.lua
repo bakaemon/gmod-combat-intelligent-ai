@@ -13,9 +13,11 @@ function B.New()
         spatialMap = {
             chokepoints = {},
             highGround = {},
+            cover = {},
             flankRoutes = {},
             rooms = {},
             doorways = {},
+            heatmap = {},
             lastScan = 0,
             scanIdx = 0,
         },
@@ -61,6 +63,11 @@ function B.MarkCover(squad, pos, success)
     local key = posKey(pos)
     local map = success and squad.blackboard.goodCover or squad.blackboard.badCover
     map[key] = (map[key] or 0) + 1
+    if success then
+        CAI.SpatialMap.RecordSafety(squad, pos)
+    else
+        CAI.SpatialMap.RecordDanger(squad, pos)
+    end
 end
 
 function B.CoverHistory(squad, pos)

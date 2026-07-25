@@ -363,6 +363,44 @@ BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
         local creepRange = ideal * pcfg.CreepMult
         local stopRange = ideal * pcfg.StopMult
 
+        if data._pushCoverPhase then
+            local coverPos = data._pushCover
+            if data._pushCoverPhase == "move" and coverPos then
+                if N.Arrived(data, 80) then
+                    data._pushCoverPhase = "peek"
+                    data._pushPeekUntil = CurTime() + pcfg.BurstDuration
+                    data._pushHops = (data._pushHops or 0) + 1
+                    CAI.Brain.Prefire(data, enemyPos)
+                    CAI.FriendlyFire.Update(data)
+                    return
+                end
+                CAI.Nav.MoveTo(data, coverPos, "run")
+                CAI.FriendlyFire.Update(data)
+                return
+            end
+            if data._pushCoverPhase == "peek" then
+                if now > data._pushPeekUntil then
+                    data._pushCoverPhase = "acquire"
+                    data._pushCover = nil
+                else
+                    CAI.Brain.FireSchedule(data)
+                end
+                CAI.FriendlyFire.Update(data)
+                return
+            end
+        end
+
+        if not data._pushCoverPhase and dist > creepRange then
+            local coverPos = CAI.Cover.QueryNearby(data, npc:GetPos(), 600, { towardEnemy = true })
+            if coverPos and not (data._pushHops or 0) >= 3 then
+                data._pushCover = coverPos
+                data._pushCoverPhase = "move"
+                CAI.Nav.MoveTo(data, coverPos, "run")
+                CAI.FriendlyFire.Update(data)
+                return
+            end
+        end
+
         if dist > creepRange then
             if dist <= maxRange and CAI.Util.Sees(npc, enemy)
                and now >= (data.fireUntil or 0)

@@ -29,6 +29,23 @@ function N.MoveTo(data, pos, mode)
     return true
 end
 
+function N.ReflexMove(data, pos, mode)
+    local npc = data.ent
+    if not IsValid(npc) or not pos then return nil end
+
+    if data.moveTarget then
+        local dir = pos - data.moveTarget
+        dir.z = 0
+        if dir:LengthSqr() > 1 then
+            return dir:GetNormalized() * 200
+        end
+        return nil
+    end
+
+    N.MoveTo(data, pos, mode or "run")
+    return nil
+end
+
 function N.Arrived(data, tolerance)
     if not data.moveTarget then return true end
     tolerance = tolerance or 70

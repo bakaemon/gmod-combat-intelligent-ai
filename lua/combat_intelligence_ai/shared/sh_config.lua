@@ -141,6 +141,19 @@ C.Cover = {
         nearChokepoint = 0.6,
         dark = 0.5,
     },
+    CellSize = 128,
+    MapTTL = 8,
+    MaxPerCell = 6,
+    NearbyRadius = 500,
+    ScanBudget = 10,
+}
+
+C.Heatmap = {
+    DangerIncrement = 10,
+    SafetyIncrement = 5,
+    RadiateRadius = 200,
+    DecayRate = 2,
+    DangerThreshold = 15,
 }
 
 C.Memory = {
