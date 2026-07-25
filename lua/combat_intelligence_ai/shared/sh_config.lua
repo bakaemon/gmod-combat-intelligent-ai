@@ -612,6 +612,7 @@ C.SquadTactics = {
     MinSpacing = 150,
     PatrolFormation = true,
     FormationBreakRadius = 600,
+    SuppressorRatio = 0.33,
 }
 
 C.Push = {

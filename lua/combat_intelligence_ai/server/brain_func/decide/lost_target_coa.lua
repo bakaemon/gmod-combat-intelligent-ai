@@ -5,7 +5,12 @@ table.insert(BR.COA.Target, function(ctx)
     if not IsValid(enemy) or ctx.visible then return end
 
     if data.suppressUntil and CurTime() < data.suppressUntil then
-        return CAI.PHASE.ENGAGE, "suppress", 3, "squad_suppress_order"
+        if data.squad and #data.squad.members > 1
+           and data.role ~= CAI.ROLE.SUPPRESSOR then
+            -- fall through to investigate/search/cover
+        else
+            return CAI.PHASE.ENGAGE, "suppress", 3, "squad_suppress_order"
+        end
     end
     if data.squad and IsValid(data.squad.leader) and data.squad.leader ~= npc
        and data.role ~= CAI.ROLE.FLANKER

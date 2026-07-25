@@ -13,8 +13,6 @@ function CAI.FireAim.Alloc(data)
     bull:SetSolid(SOLID_NONE)
     bull:SetHealth(999999)
     data.suppBullseye = bull
-    local npc = data.ent
-    if IsValid(npc) then npc:AddEntityRelationship(bull, D_HT, 99) end
 end
 
 function CAI.FireAim.Aim(data, pos, ttl)
@@ -23,7 +21,11 @@ function CAI.FireAim.Aim(data, pos, ttl)
     if not IsValid(bull) then return end
 
     bull:SetPos(pos)
-    if npc.SetEnemy then
+    local npcIsValid = IsValid(npc)
+    if npcIsValid and npc.AddEntityRelationship then
+        npc:AddEntityRelationship(bull, D_HT, 99)
+    end
+    if npcIsValid and npc.SetEnemy then
         npc:SetEnemy(bull)
         if npc.UpdateEnemyMemory and npc:GetEnemy() == bull then
             npc:UpdateEnemyMemory(bull, pos)
@@ -41,8 +43,13 @@ function CAI.FireAim.Stop(data)
     if not IsValid(bull) then return end
 
     local npc = data.ent
-    if IsValid(npc) and npc.GetEnemy and npc:GetEnemy() == bull then
-        npc:SetEnemy(NULL)
+    if IsValid(npc) then
+        if npc.GetEnemy and npc:GetEnemy() == bull then
+            npc:SetEnemy(NULL)
+        end
+        if npc.AddEntityRelationship then
+            npc:AddEntityRelationship(bull, D_NU, 0)
+        end
     end
     bull:SetPos(VOID_POS)
     data._fireAimUntil = nil

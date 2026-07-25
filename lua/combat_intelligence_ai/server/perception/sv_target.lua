@@ -42,8 +42,13 @@ function T.Evaluate(data)
         if not IsValid(enemy) or allied or not CAI.Util.IsTargetable(enemy) then
 
             data.memory.enemies[enemy] = nil
-            if IsValid(enemy) and npc.ClearEnemyMemory then
-                npc:ClearEnemyMemory(enemy)
+            if IsValid(enemy) then
+                if npc.ClearEnemyMemory then
+                    npc:ClearEnemyMemory(enemy)
+                end
+                if npc.GetEnemy and npc:GetEnemy() == enemy then
+                    npc:SetEnemy(NULL)
+                end
             end
         else
             local s = T.Score(data, enemy, rec)

@@ -366,7 +366,7 @@ BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
         if data._pushCoverPhase then
             local coverPos = data._pushCover
             if data._pushCoverPhase == "move" and coverPos then
-                if N.Arrived(data, 80) then
+                if CAI.Nav.Arrived(data, 80) then
                     data._pushCoverPhase = "peek"
                     data._pushPeekUntil = CurTime() + pcfg.BurstDuration
                     data._pushHops = (data._pushHops or 0) + 1
@@ -392,7 +392,7 @@ BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
 
         if not data._pushCoverPhase and dist > creepRange then
             local coverPos = CAI.Cover.QueryNearby(data, npc:GetPos(), 600, { towardEnemy = true })
-            if coverPos and not (data._pushHops or 0) >= 3 then
+            if coverPos and (data._pushHops or 0) < 3 then
                 data._pushCover = coverPos
                 data._pushCoverPhase = "move"
                 CAI.Nav.MoveTo(data, coverPos, "run")

@@ -130,6 +130,29 @@ function SF.Plan(squad)
         end
     end
 
+    local maxSuppressors = math.max(1, math.floor(#squad.members * CAI.Config.SquadTactics.SuppressorRatio))
+    local currentSuppressors = 0
+    for _, m in ipairs(squad.members) do
+        local d = CAI.Manager.Get(m)
+        if d and d.role == CAI.ROLE.SUPPRESSOR then
+            currentSuppressors = currentSuppressors + 1
+        end
+    end
+    if currentSuppressors < maxSuppressors and inCombat then
+        for _, m in ipairs(squad.members) do
+            if currentSuppressors >= maxSuppressors then break end
+            local d = CAI.Manager.Get(m)
+            if d and d.role ~= CAI.ROLE.SUPPRESSOR
+               and d.role ~= CAI.ROLE.FLANKER
+               and d.role ~= CAI.ROLE.LEADER then
+                d.role = CAI.ROLE.SUPPRESSOR
+                d.suppressUntil = now + cfg.Interval * 2
+                d.suppressStarted = now
+                currentSuppressors = currentSuppressors + 1
+            end
+        end
+    end
+
     if (squad.plan == "push" or squad.plan == "flank") and #squad.members >= 2 then
         if not squad._boundSwitchAt or now - squad._boundSwitchAt > CAI.Config.SquadTactics.BoundInterval then
             squad._boundSwitchAt = now
@@ -150,8 +173,10 @@ function SF.Plan(squad)
             for _, m in ipairs(fireTeam) do
                 local d = CAI.Manager.Get(m)
                 if d then
-                    d.suppressUntil = now + CAI.Config.SquadTactics.BoundInterval
-                    if cornerpush then d.cornerRole = "overwatch" end
+                    if d.role == CAI.ROLE.SUPPRESSOR then
+                        d.suppressUntil = now + CAI.Config.SquadTactics.BoundInterval
+                        if cornerpush then d.cornerRole = "overwatch" end
+                    end
                 end
             end
             for _, m in ipairs(maneuverTeam) do

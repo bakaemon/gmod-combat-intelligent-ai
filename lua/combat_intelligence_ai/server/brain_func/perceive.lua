@@ -46,13 +46,15 @@ BR.Perceive = function(data)
                 CAI.Battlefield.ReportEnemy(data.squad, engineEnemy, engineEnemy:GetPos(), npc)
                 if firstContact then
                     CAI.Voice.Speak(data, "enemy_spotted")
-                    CAI.Squad.Broadcast(data.squad, "enemy_spotted", npc,
-                        { enemy = engineEnemy, pos = engineEnemy:GetPos() })
-                    data.squad.lastHelpCallAt = data.squad.lastHelpCallAt or 0
-                    if CurTime() - data.squad.lastHelpCallAt > 6 then
-                        data.squad.lastHelpCallAt = CurTime()
-                        CAI.Squad.Broadcast(data.squad, "need_help", npc,
-                            { pos = engineEnemy:GetPos() })
+                    if engineEnemy:GetClass() ~= "npc_bullseye" then
+                        CAI.Squad.Broadcast(data.squad, "enemy_spotted", npc,
+                            { enemy = engineEnemy, pos = engineEnemy:GetPos() })
+                        data.squad.lastHelpCallAt = data.squad.lastHelpCallAt or 0
+                        if CurTime() - data.squad.lastHelpCallAt > 6 then
+                            data.squad.lastHelpCallAt = CurTime()
+                            CAI.Squad.Broadcast(data.squad, "need_help", npc,
+                                { pos = engineEnemy:GetPos() })
+                        end
                     end
                 end
             end

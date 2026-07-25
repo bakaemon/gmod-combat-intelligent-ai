@@ -137,6 +137,7 @@ end
 
 function SQ.OnComm(data, event, sender, payload)
     if event == "enemy_spotted" and payload then
+        if payload.enemy and payload.enemy:GetClass() == "npc_bullseye" then return end
         CAI.Memory.HearEnemy(data, payload.enemy, payload.pos)
         if CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "idle") or CAI.PhaseIs(data, CAI.PHASE.PRE_CONTACT, "patrol") then
             planPending(data, "squad_cover")
