@@ -1,5 +1,6 @@
 CAI.Cover = CAI.Cover or {}
 local CV = CAI.Cover
+local C = CAI.Config
 
 local spotCache = {}
 local propSpotCache = {}
@@ -281,10 +282,10 @@ function CV.QueryNearby(data, origin, radius, opts)
                 for _, e in ipairs(entries) do
                     local dist = e.pos:DistToSqr(origin)
                     if dist < radius * radius then
-                        local heatKey = math.floor(e.pos.x / cellSize) .. ":" .. math.floor(e.pos.y / cellSize)
-                        local h = sm.heatmap[heatKey]
-                        local netHeat = h and (h.safety - h.danger) or 0
-                        if netHeat >= -CAI.Config.Heatmap.DangerThreshold then
+local heatKey = math.floor(e.pos.x / cellSize) .. ":" .. math.floor(e.pos.y / cellSize)
+                    local h = sm.heatmap[heatKey]
+                    local cellTemp = h and h.temp or C.Heatmap.Baseline
+                    if cellTemp < CAI.Config.Heatmap.DangerThreshold then
                             local score = dist
                             if e.weight > 0 then score = score * (1 + e.weight * 0.5) end
                             if score < bestScore then best, bestScore = e.pos, score end

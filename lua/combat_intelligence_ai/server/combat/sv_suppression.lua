@@ -9,6 +9,14 @@ function S.Add(data, amount)
     data.suppression = math.min(CAI.Config.Suppression.Max, data.suppression + amount * resist)
     data.lastSuppressedAt = CurTime()
 
+    if data.squad then
+        local atCover = data.cover and data.cover.pos
+            and data.ent:GetPos():DistToSqr(data.cover.pos) < 6400
+        if not atCover then
+            CAI.SpatialMap.RecordTemp(data.squad, data.ent:GetPos(), CAI.Config.Heatmap.HeatIncrement)
+        end
+    end
+
     if data.suppression > CAI.Config.Suppression.PinnedAt and not data.saidTakingFire then
         data.saidTakingFire = true
         CAI.Voice.Speak(data, "taking_fire")

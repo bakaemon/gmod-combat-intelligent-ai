@@ -14,9 +14,43 @@ function SF.PlanPatrol(squad)
     if squad.patrolPos then
         local arrived = leader:GetPos():DistToSqr(squad.patrolPos) < 120 * 120
         if not arrived then return end
+        CAI.SpatialMap.RecordTemp(squad, squad.patrolPos, -CAI.Config.Heatmap.PatrolDecrement)
     end
 
     local chosen, chosenKey
+    local sm = squad.blackboard.spatialMap
+    local cellSize = CAI.Config.Cover.CellSize
+    local heatCfg = CAI.Config.Heatmap
+    local cellR = math.ceil(heatCfg.PatrolRadius / cellSize)
+    local cx, cy = math.floor(leaderPos.x / cellSize), math.floor(leaderPos.y / cellSize)
+    local bestUncleared, bestUnclearedKey, bestDist = nil, nil, math.huge
+    for dx = -cellR, cellR do
+        for dy = -cellR, cellR do
+            local key = (cx + dx) .. ":" .. (cy + dy)
+            local h = sm.heatmap[key]
+            if h and h.temp >= heatCfg.Baseline - 2 then
+                local cellCenter = Vector((cx + dx + 0.5) * cellSize, (cy + dy + 0.5) * cellSize, leaderPos.z)
+                local d = leaderPos:DistToSqr(cellCenter)
+                if d < bestDist then
+                    bestUncleared, bestUnclearedKey, bestDist = key, key, d
+                end
+            end
+        end
+    end
+    if bestUncleared and bestUnclearedKey then
+        local matchX, matchY = bestUnclearedKey:match("^(-?%d+):(-?%d+)$")
+        if matchX and matchY then
+            local center = Vector((tonumber(matchX) + 0.5) * cellSize, (tonumber(matchY) + 0.5) * cellSize, leaderPos.z)
+            local cand = CAI.Nav.RandomPointNear(center, cellSize * 0.5, true)
+            if cand then
+                local safe = CAI.Nav.SafeGround(cand)
+                if safe then
+                    chosen, chosenKey = safe, CAI.Battlefield.PosKey(safe)
+                end
+            end
+        end
+    end
+
     local best, bestKey, bestD = nil, nil, math.huge
     for _, poi in ipairs(CAI.Battlefield.GetPatrolPoints(squad, leaderPos, RADIUS)) do
         local d = leaderPos:DistToSqr(poi.pos)

@@ -134,12 +134,14 @@ BR.ExecPhase[CAI.PHASE.MANEUVER] = function(data)
             if IsValid(enemy) then
                 if npc.SetEnemy then npc:SetEnemy(enemy) end
                 data.planPending = "flank_complete"
-            else
-                if not CAI.Search.Begin(data, enemy, rec and rec.pos) then
+            elseif rec then
+                if not CAI.Search.Begin(data, enemy, rec.pos) then
                     data.planPending = "flank_arrived_nosearch"
                 else
                     data.planPending = "flank_arrived"
                 end
+            else
+                data.planPending = "flank_arrived_nosearch"
             end
         end
         return

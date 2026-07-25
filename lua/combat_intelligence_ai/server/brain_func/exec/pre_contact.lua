@@ -18,10 +18,35 @@ BR.ExecPhase[CAI.PHASE.PRE_CONTACT] = function(data)
                 local slot = idx and CAI.SquadFunc.FormationSlot(squad, idx)
                 if slot then
                     if data.moveTarget and not CAI.Nav.Arrived(data, 80) then return end
-                    CAI.Nav.MoveTo(data, slot, "walk")
+                    local safe = CAI.Nav.SafeGround(slot)
+                    if safe and IsValid(navmesh.GetNearestNavArea(safe)) then
+                        CAI.Nav.MoveTo(data, safe, "walk")
+                    else
+                        local dir = squad.leader:GetPos() - npc:GetPos()
+                        dir.z = 0
+                        if dir:LengthSqr() > 1 then
+                            local toward = CAI.Nav.SafeGround(npc:GetPos() + dir:GetNormalized() * 100)
+                            if toward then
+                                CAI.Nav.MoveTo(data, toward, "walk")
+                            end
+                        end
+                    end
                 end
             end
             CAI.Nav.CheckStuck(data)
+            local heatCfg = CAI.Config.Heatmap
+            local src = npc:GetPos()
+            CAI.SpatialMap.RecordTemp(squad, src, -heatCfg.AuraCoolRate, heatCfg.AuraRadiateRadius)
+            local fwd = npc:GetForward(); fwd.z = 0; fwd:Normalize()
+            local right = npc:GetRight(); right.z = 0; right:Normalize()
+            local halfFov = math.rad(heatCfg.ConeFOV * 0.5)
+            local step = heatCfg.ConeRays > 1 and (heatCfg.ConeFOV * math.pi / 180) / (heatCfg.ConeRays - 1) or 0
+            for i = 0, heatCfg.ConeRays - 1 do
+                local angle = -halfFov + i * step
+                local dir = fwd * math.cos(angle) + right * math.sin(angle)
+                local endPos = src + dir * heatCfg.ConeRange
+                CAI.SpatialMap.RecordTemp(squad, endPos, -heatCfg.ConeCoolRate)
+            end
             if math.random() < 0.1 then CAI.Voice.Speak(data, "idle") end
             return
         end
@@ -120,6 +145,21 @@ BR.ExecPhase[CAI.PHASE.PRE_CONTACT] = function(data)
             CAI.Nav.MoveTo(data, chosen, "walk")
         end
         CAI.Nav.CheckStuck(data)
+        if squad then
+            local heatCfg = CAI.Config.Heatmap
+            local src = npc:GetPos()
+            CAI.SpatialMap.RecordTemp(squad, src, -heatCfg.AuraCoolRate, heatCfg.AuraRadiateRadius)
+            local fwd = npc:GetForward(); fwd.z = 0; fwd:Normalize()
+            local right = npc:GetRight(); right.z = 0; right:Normalize()
+            local halfFov = math.rad(heatCfg.ConeFOV * 0.5)
+            local step = heatCfg.ConeRays > 1 and (heatCfg.ConeFOV * math.pi / 180) / (heatCfg.ConeRays - 1) or 0
+            for i = 0, heatCfg.ConeRays - 1 do
+                local angle = -halfFov + i * step
+                local dir = fwd * math.cos(angle) + right * math.sin(angle)
+                local endPos = src + dir * heatCfg.ConeRange
+                CAI.SpatialMap.RecordTemp(squad, endPos, -heatCfg.ConeCoolRate)
+            end
+        end
         if math.random() < 0.15 then CAI.Voice.Speak(data, "idle") end
     elseif intent == "search" then
         if not data.search then

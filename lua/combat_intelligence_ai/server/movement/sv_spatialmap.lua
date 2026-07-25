@@ -196,6 +196,7 @@ function SM.Scan(squad)
     local now = CurTime()
     local sm = squad.blackboard.spatialMap
     local cfg = CAI.Config.SpatialMap
+    local elapsed = CurTime() - sm.lastScan
     if now - sm.lastScan < cfg.ScanInterval then return end
     sm.lastScan = now
     local allAreas = AllNavAreas()
@@ -275,12 +276,16 @@ function SM.Scan(squad)
 
     SM.ScanCover(squad)
 
-    local elapsed = CurTime() - sm.lastScan
     local heatCfg = CAI.Config.Heatmap
     for key, h in pairs(sm.heatmap) do
-        h.danger = math.max(0, h.danger - heatCfg.DecayRate * elapsed)
-        h.safety = math.max(0, h.safety - heatCfg.DecayRate * elapsed)
-        if h.danger < 1 and h.safety < 1 then sm.heatmap[key] = nil end
+        if h.temp > heatCfg.Baseline then
+            h.temp = math.max(heatCfg.Baseline, h.temp - heatCfg.HeatDecayRate * elapsed)
+        elseif h.temp < heatCfg.Baseline then
+            h.temp = math.min(heatCfg.Baseline, h.temp + heatCfg.SafetyDecayRate * elapsed)
+        end
+        if h.temp >= heatCfg.Baseline - 2 and h.temp <= heatCfg.Baseline + 2 then
+            sm.heatmap[key] = nil
+        end
     end
 end
 
@@ -299,7 +304,7 @@ local function heatKey(pos)
     return math.floor(pos.x / cellSize) .. ":" .. math.floor(pos.y / cellSize)
 end
 
-function SM.RecordDanger(squad, pos, amount, radius)
+function SM.RecordTemp(squad, pos, delta, radius)
     if not squad then return end
     local cfg = CAI.Config.Heatmap
     radius = radius or cfg.RadiateRadius
@@ -315,52 +320,24 @@ function SM.RecordDanger(squad, pos, amount, radius)
                 local key = (cx + dx) .. ":" .. (cy + dy)
                 local h = sm.heatmap[key]
                 if not h then
-                    h = { danger = 0, safety = 0, updatedAt = 0, lastDangerAt = 0 }
+                    h = { temp = cfg.Baseline, updatedAt = 0, lastDangerAt = 0 }
                     sm.heatmap[key] = h
                 end
-                local a = amount or cfg.DangerIncrement
-                h.danger = h.danger + a * falloff
+                h.temp = math.Clamp(h.temp + delta * falloff, 0, 50)
                 h.updatedAt = CurTime()
-                if dist < cellSize * 0.5 then h.lastDangerAt = CurTime() end
+                if delta > 0 and dist < cellSize * 0.5 then h.lastDangerAt = CurTime() end
             end
         end
     end
 end
 
-function SM.RecordSafety(squad, pos, amount, radius)
-    if not squad then return end
-    local cfg = CAI.Config.Heatmap
-    radius = radius or cfg.RadiateRadius
-    local cellSize = CAI.Config.Cover.CellSize
-    local cellR = math.ceil(radius / cellSize)
-    local cx, cy = math.floor(pos.x / cellSize), math.floor(pos.y / cellSize)
-    local sm = squad.blackboard.spatialMap
-    for dx = -cellR, cellR do
-        for dy = -cellR, cellR do
-            local dist = math.sqrt(dx * dx + dy * dy) * cellSize + cellSize * 0.5
-            if dist <= radius then
-                local falloff = 1 - dist / radius
-                local key = (cx + dx) .. ":" .. (cy + dy)
-                local h = sm.heatmap[key]
-                if not h then
-                    h = { danger = 0, safety = 0, updatedAt = 0, lastDangerAt = 0 }
-                    sm.heatmap[key] = h
-                end
-                local a = amount or cfg.SafetyIncrement
-                h.safety = h.safety + a * falloff
-                h.updatedAt = CurTime()
-            end
-        end
-    end
-end
-
-function SM.QueryHeat(squad, pos)
-    if not squad then return 0 end
+function SM.QueryTemp(squad, pos)
+    if not squad then return CAI.Config.Heatmap.Baseline end
     local cellSize = CAI.Config.Cover.CellSize
     local key = math.floor(pos.x / cellSize) .. ":" .. math.floor(pos.y / cellSize)
     local h = squad.blackboard.spatialMap.heatmap[key]
-    if not h then return 0 end
-    return h.safety - h.danger
+    if not h then return CAI.Config.Heatmap.Baseline end
+    return h.temp
 end
 
 local coverScanCounters = {}

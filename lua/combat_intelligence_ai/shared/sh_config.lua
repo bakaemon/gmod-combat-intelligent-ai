@@ -149,11 +149,20 @@ C.Cover = {
 }
 
 C.Heatmap = {
-    DangerIncrement = 10,
-    SafetyIncrement = 5,
+    Baseline = 25,
+    HeatIncrement = 10,
+    PatrolDecrement = 5,
+    HeatDecayRate = 0.25,
+    SafetyDecayRate = 0.4,
     RadiateRadius = 200,
-    DecayRate = 2,
-    DangerThreshold = 15,
+    DangerThreshold = 35,
+    AuraRadiateRadius = 100,
+    AuraCoolRate = 0.5,
+    ConeRange = 500,
+    ConeFOV = 90,
+    ConeRays = 5,
+    ConeCoolRate = 1,
+    PatrolRadius = 1200,
 }
 
 C.Memory = {

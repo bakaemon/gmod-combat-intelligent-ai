@@ -11,13 +11,6 @@ table.insert(BR.ReflexHandlers, function(data, dt)
     local biasVec = nil
     local urgency = sup >= C.Suppression.PinnedAt and "attention" or nil
 
-    if (data.cover or data._pushCoverPhase == "peek") and squad then
-        local netHeat = CAI.SpatialMap.QueryHeat(squad, src)
-        if netHeat >= -C.Heatmap.DangerThreshold then
-            return nil, urgency
-        end
-    end
-
     local coverPos = squad and CAI.Cover.QueryNearby(data, src, C.Cover.NearbyRadius or 500)
     if coverPos then
         biasVec = CAI.Nav.ReflexMove(data, coverPos)
@@ -31,10 +24,6 @@ table.insert(BR.ReflexHandlers, function(data, dt)
                 biasVec = away:GetNormalized() * 150
             end
         end
-    end
-
-    if squad then
-        CAI.SpatialMap.RecordDanger(squad, src)
     end
 
     return biasVec, urgency

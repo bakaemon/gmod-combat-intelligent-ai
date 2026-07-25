@@ -112,6 +112,7 @@ function BR.Prefire(data, pos)
         CAI.Schedule(data, SCHED_ESTABLISH_LINE_OF_FIRE)
         return
     end
+    if not pos then return end
     local aim = pos + Vector(0, 0, 40)
     CAI.FireAim.Aim(data, aim, 1.2)
 end

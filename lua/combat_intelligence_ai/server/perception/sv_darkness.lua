@@ -18,7 +18,7 @@ function CAI.ApplyDarknessVision(data)
     if not data.baseLookDist then
         local base = npc.GetMaxLookDistance and npc:GetMaxLookDistance()
         if not base or base < 600 then base = 2048 end
-        data.baseLookDist = base
+        data.baseLookDist = math.max(base, 8000)
     end
     if not CAI.CVBool("cai_darkness") then
         npc:SetMaxLookDistance(data.baseLookDist)
