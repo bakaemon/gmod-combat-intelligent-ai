@@ -314,7 +314,16 @@ BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
     end
 
     local enemy = npc:GetEnemy()
-    if not IsValid(enemy) then return end
+    if not IsValid(enemy) then
+        local ct, cr = BR.CombatTarget(data)
+        if not IsValid(ct) then
+            data.planPending = "target_lost"
+            data.plan.expiresAt = CurTime()
+            return
+        end
+        if npc.SetEnemy then npc:SetEnemy(ct) end
+        enemy = ct
+    end
     if decision == "cornered_melee" then
         if CurTime() - (data.meleeAt or 0) > 1.2 then
             data.meleeAt = CurTime()

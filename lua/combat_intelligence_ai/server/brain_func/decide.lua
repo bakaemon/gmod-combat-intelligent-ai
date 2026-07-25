@@ -8,10 +8,10 @@ local DIR = "combat_intelligence_ai/server/brain_func/decide/"
 BR.COA.PreTarget = BR.COA.OODA.PreTarget
 BR.COA.Target = BR.COA.OODA.Target
 
-include(DIR .. "morale_break.lua")
-include(DIR .. "panic.lua")
 include(DIR .. "flank_protect.lua")
 include(DIR .. "melee_threat.lua")
+include(DIR .. "morale_break.lua")
+include(DIR .. "panic.lua")
 include(DIR .. "room_clear_coa.lua")
 include(DIR .. "pinned.lua")
 include(DIR .. "engage_target.lua")

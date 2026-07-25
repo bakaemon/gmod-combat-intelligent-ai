@@ -56,6 +56,10 @@ BR.Perceive = function(data)
                     end
                 end
             end
+            if firstContact then
+                data.planPending = "enemy_spotted"
+                data.plan.expiresAt = CurTime()
+            end
         else
             local rec = data.memory.enemies[engineEnemy]
             if not rec or (rec.heardOnly and CurTime() - rec.t > 1.0) then

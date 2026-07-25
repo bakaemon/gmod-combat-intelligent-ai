@@ -181,16 +181,30 @@ BR.ExecPhase[CAI.PHASE.WITHDRAW] = function(data)
                 local dest = unseen or fallback
                 if dest then
                     data.retreatDest = dest
+                    data.retreatMoveAt = CurTime()
                     CAI.Nav.MoveTo(data, dest, "run")
+                else
+                    data.retreatDest = nil
                 end
-            elseif not data.fleeSched then
-                data.fleeSched = true
-                npc:SetSchedule(SCHED_RUN_FROM_ENEMY)
             end
             if not data.saidRetreat then
                 data.saidRetreat = true
                 CAI.Voice.Speak(data, "retreat")
                 if data.squad then CAI.Squad.Broadcast(data.squad, "retreating", npc) end
+            end
+        end
+        -- Re-issue movement to existing retreat destination every 1s
+        if data.retreatDest and CurTime() - (data.retreatMoveAt or 0) > 1 then
+            data.retreatMoveAt = CurTime()
+            CAI.Nav.MoveTo(data, data.retreatDest, "run")
+        elseif nearPos then
+            -- Fallback: run away from nearest enemy
+            local away = (npc:GetPos() - nearPos):GetNormalized() * 600
+            local dest = CAI.Nav.SafeOffset(npc:GetPos(), away, 600)
+            if dest then
+                data.retreatDest = dest
+                data.retreatMoveAt = CurTime()
+                CAI.Nav.MoveTo(data, dest, "run")
             end
         end
         return

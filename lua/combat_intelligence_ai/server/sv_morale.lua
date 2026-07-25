@@ -152,6 +152,9 @@ CAI.SafeHook("EntityTakeDamage", "CAI_DamageReact", CAI.Prof.Wrap("morale_damage
             CAI.Battlefield.ReportEnemy(data.squad, attacker, attacker:GetPos(), victim)
             CAI.Squad.Broadcast(data.squad, "taking_fire", victim)
         end
+        data.retaliateTarget = attacker
+        data.retaliateUntil = CurTime() + 1.5
+        data.retaliatePos = attacker:GetPos()
     end
 end))
 

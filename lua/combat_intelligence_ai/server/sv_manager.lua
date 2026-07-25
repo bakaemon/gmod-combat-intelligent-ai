@@ -77,6 +77,9 @@ function MG.Register(npc)
         clearPhase = nil,
         clearAngle = nil,
         clearSliceStart = nil,
+        retaliateTarget = nil,
+        retaliateUntil = nil,
+        retaliatePos = nil,
     }
     if data.faction == "combine" then
         pcall(function() npc:SetSaveValue("m_iNumGrenades", 2) end)

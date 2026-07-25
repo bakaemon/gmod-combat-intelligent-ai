@@ -58,6 +58,9 @@ function BR.Think(data, dt)
         BR.StopSuppressing(data)
     end
 
+    -- Retaliate: brief fire-back at whoever just hit us
+    BR.Retaliate(data)
+
     if CAI.CVBool("cai_npc_regen") and npc:Health() < npc:GetMaxHealth()
        and CurTime() - (data.lastHurtAt or 0) > 6 then
         npc:SetHealth(math.min(npc:GetMaxHealth(), npc:Health() + 9 * dt))
