@@ -54,6 +54,10 @@ function CAI.RegisterNPCClass(class, tbl)
     C.NPCClasses[class] = tbl or { faction = "custom" }
 end
 
+C.OODA = {
+    PhaseCooldown = 1.5,  -- minimum seconds before phase can change (state.lua + ooda.lua)
+}
+
 C.LOD = {
 
     { dist = 1500, interval = 0.15 },
@@ -68,6 +72,8 @@ C.Engage = {
     -- Distance (u) under which a NPC with no line of sight backs off to regain
     -- a sightline. With line of sight it simply holds and fires instead.
     PointBlank = 120,
+    -- Minimum seconds between SetSchedule calls (Entity.SetSchedule patch).
+    SchedCooldown = 0.2,
     -- Minimum seconds between re-issuing the fire schedule (no schedule thrash).
     RetryGap = 0.4,
     -- Distance (u) within which a known enemy (fresh memory, no clean LOS) is

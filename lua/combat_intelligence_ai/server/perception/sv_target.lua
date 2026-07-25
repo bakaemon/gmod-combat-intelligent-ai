@@ -65,7 +65,7 @@ function T.Evaluate(data)
     if IsValid(best) and npc.SetEnemy then
         if npc:GetEnemy() ~= best then
             npc:SetEnemy(best)
-            if npc.UpdateEnemyMemory then
+            if npc.UpdateEnemyMemory and npc:GetEnemy() == best then
                 npc:UpdateEnemyMemory(best, bestRec.pos or best:GetPos())
             end
         end

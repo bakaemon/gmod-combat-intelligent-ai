@@ -3,6 +3,16 @@ local BR = CAI.Brain
 function BR.OODA(data)
     local npc = data.ent
 
+    -- Phase change throttle: skip re-evaluation if within PhaseCooldown.
+    -- Bypassed when exec explicitly requests re-plan (planPending) or an
+    -- immediate threat is active (urgent reflex).
+    local urgency = data.reflex and data.reflex.urgency
+    if not data.planPending and not urgency then
+        if CurTime() - (data.phaseSince or 0) < CAI.Config.OODA.PhaseCooldown then
+            return
+        end
+    end
+
     local enemy, rec = CAI.Target.Evaluate(data)
     if IsValid(enemy) then
         data.combatTarget, data.combatRec = enemy, rec
@@ -56,7 +66,8 @@ function BR.OODA(data)
         reason = "fallback"
     end
 
-    BR.SetPhase(data, phase, intent, reason)
+    local hadPending = data.planPending ~= nil
+    BR.SetPhase(data, phase, intent, reason, hadPending)
     data.plan.expiresAt = CurTime() + duration
     data.planPending = nil
 end

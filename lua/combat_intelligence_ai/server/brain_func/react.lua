@@ -64,6 +64,7 @@ include(DIR .. "shared.lua")
 include(DIR .. "reflexes/grenade_dodge.lua")
 include(DIR .. "reflexes/melee_dodge.lua")
 include(DIR .. "reflexes/suppression_jink.lua")
+include(DIR .. "reflexes/reload_reflex.lua")
 
 -- Retaliate: brief fire-back after taking damage (called from think.lua after exec)
 include(DIR .. "retaliate.lua")

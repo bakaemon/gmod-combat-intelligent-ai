@@ -14,7 +14,7 @@ BR.Retaliate = function(data)
     if not pos then return end
     if atk and CAI.Util.CanSee(npc, atk) then
         if npc.SetEnemy then npc:SetEnemy(atk) end
-        npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
+        CAI.Schedule(data, SCHED_ESTABLISH_LINE_OF_FIRE)
     elseif not CAI.PhaseIs(data, CAI.PHASE.ENGAGE, "suppress") then
         BR.Prefire(data, pos)
     end

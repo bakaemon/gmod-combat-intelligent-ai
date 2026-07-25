@@ -41,8 +41,4 @@ table.insert(BR.COA.Target, function(ctx)
             end
         end
     end
-    local ownWep = ctx.npc:GetActiveWeapon()
-    if IsValid(ownWep) and ownWep.Clip1 and ownWep:Clip1() == 0 then
-        return CAI.PHASE.COVER, "reload", 2.5, "reloading_cover"
-    end
 end)

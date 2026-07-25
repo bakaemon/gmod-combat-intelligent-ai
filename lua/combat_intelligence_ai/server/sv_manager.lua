@@ -111,7 +111,7 @@ function MG.Unregister(npc)
     local data = MG.NPCs[npc]
     if not data then return end
     MG.Count = math.max(0, (MG.Count or 1) - 1)
-    if IsValid(data.suppBullseye) then data.suppBullseye:Remove() end
+    CAI.FireAim.Stop(data)
     if IsValid(data.flashlight) then data.flashlight:Remove() end
     if IsValid(data.flashglow) then data.flashglow:Remove() end
     if data.squad then CAI.Squad.RemoveMember(data.squad, npc) end

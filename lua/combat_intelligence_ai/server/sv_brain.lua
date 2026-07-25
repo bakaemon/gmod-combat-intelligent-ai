@@ -4,7 +4,7 @@
     This file only wires up the brain. The actual logic lives in the sibling
     brain_func/ directory, each module populating the CAI.Brain (BR) table:
 
-        state.lua     -> BR.SetPhase, BR.StopSuppressing, BR.Prefire
+        state.lua     -> BR.SetPhase, BR.Prefire, BR.FireSchedule
         perceive.lua  -> BR.Perceive
         sense.lua     -> BR.CombatTarget, BR.MeleeThreatScan
         decide.lua    -> BR.COA (OODA COA modules)

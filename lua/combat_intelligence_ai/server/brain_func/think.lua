@@ -38,24 +38,14 @@ function BR.Think(data, dt)
         if _to ~= 0 then CAI.Prof.Record("brain_ooda", SysTime() - _to) end
     end
 
+    CAI.FireAim.Tick(data)
+
     local exec = BR.ExecPhase[data.phase]
     if exec then
         local label = "exec_" .. (CAI.PHASE_NAMES[data.phase] or tostring(data.phase))
         local _te = CAI.Prof.active and SysTime() or 0
         exec(data)
         if _te ~= 0 then CAI.Prof.Record(label, SysTime() - _te) end
-    end
-
-    local isSuppressing = CAI.PhaseIs(data, CAI.PHASE.ENGAGE, "suppress")
-    if data.prefireUntil then
-        local e = npc.GetEnemy and npc:GetEnemy()
-        if CurTime() > data.prefireUntil or (IsValid(e) and e:GetClass() ~= "npc_bullseye") then
-            data.prefireUntil = nil
-            if not isSuppressing then BR.StopSuppressing(data) end
-        end
-    end
-    if not isSuppressing and not data.prefireUntil and IsValid(data.suppBullseye) then
-        BR.StopSuppressing(data)
     end
 
     -- Retaliate: brief fire-back at whoever just hit us

@@ -12,7 +12,7 @@ BR.ExecPhase[CAI.PHASE.COVER] = function(data)
         local pos = CAI.Cover.FindBest(data, enemy, enemyPos)
         if not pos and CurTime() - (data.nodeCoverAt or 0) > 3 then
             data.nodeCoverAt = CurTime()
-            npc:SetSchedule(SCHED_TAKE_COVER_FROM_ENEMY)
+            CAI.Schedule(data, SCHED_TAKE_COVER_FROM_ENEMY)
         end
         if pos then
             if dangerAvoid and CAI.Memory.AvoidPos(data, pos, CAI.Config.SelfPreserve.DangerAvoid.AdvanceIntoRadius) then
@@ -58,7 +58,7 @@ BR.ExecPhase[CAI.PHASE.COVER] = function(data)
             end
             if CurTime() - (data.engCoverAt or 0) > 3 then
                 data.engCoverAt = CurTime()
-                npc:SetSchedule(SCHED_TAKE_COVER_FROM_ENEMY)
+                CAI.Schedule(data, SCHED_TAKE_COVER_FROM_ENEMY)
             end
             return
         end
@@ -69,31 +69,6 @@ BR.ExecPhase[CAI.PHASE.COVER] = function(data)
             or npc:IsCurrentSchedule(SCHED_FORCED_GO_RUN))
         if not inGo and CurTime() - (data.moveIssuedAt or 0) > 1.0 then
             CAI.Nav.MoveTo(data, data.cover.pos, "run")
-        end
-    end
-
-    if data.lastDecision == "reloading_cover" then
-        local wep = npc:GetActiveWeapon()
-        if IsValid(wep) and wep.Clip1 and wep:Clip1() == 0 then
-            local reloading = npc.IsCurrentSchedule and npc:IsCurrentSchedule(SCHED_RELOAD)
-            if not reloading and CurTime() - (data.forceReloadAt or 0) > 3.5 then
-                data.forceReloadAt = CurTime()
-                data.coverPhase = nil
-                data.moveTarget = nil
-                npc:SetSchedule(SCHED_RELOAD)
-            end
-            return
-        end
-        if IsValid(wep) and wep.Clip1 and wep:Clip1() > 0 then
-            data.forceReloadAt = nil
-            local engaged = IsValid(enemy) and CAI.Util.Sees(npc, enemy)
-                and npc:GetPos():Distance(enemy:GetPos()) <= CAI.WeaponIntel.OwnRange(npc)
-            if not engaged and data.squad and IsValid(data.squad.leader) and data.squad.leader ~= npc
-               and npc:GetPos():DistToSqr(data.squad.leader:GetPos()) > 900 * 900 then
-                data.cover = nil
-                data.planPending = "reloaded_regroup"
-                return
-            end
         end
     end
 
@@ -131,6 +106,17 @@ BR.ExecPhase[CAI.PHASE.COVER] = function(data)
                         CAI.Brain.FireSchedule(data)
                     end
                 end
+            end
+        end
+    end
+    do
+        local wep = npc:GetActiveWeapon()
+        if IsValid(wep) and wep.Clip1 and wep:Clip1() > 0 and wep:Clip1() < (wep.GetMaxClip1 and wep:GetMaxClip1() or wep:Clip1()) * 0.3 then
+            local reloading = npc.IsCurrentSchedule and npc:IsCurrentSchedule(SCHED_RELOAD)
+            if not reloading and CurTime() > (data._tacticalReloadAt or 0) then
+                data._tacticalReloadAt = CurTime() + 2.0
+                data._reloadingAt = CurTime()
+                npc:SetSchedule(SCHED_RELOAD)
             end
         end
     end

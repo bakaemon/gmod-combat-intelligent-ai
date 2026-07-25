@@ -38,7 +38,7 @@ BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
             BR.StopSuppressing(data)
             data.suppNoLosAt = now
             if npc.SetEnemy then npc:SetEnemy(enemy) end
-            if npc.UpdateEnemyMemory then npc:UpdateEnemyMemory(enemy, rec.pos) end
+            if npc.UpdateEnemyMemory and npc:GetEnemy() == enemy then npc:UpdateEnemyMemory(enemy, rec.pos) end
         else
             if not data.suppNoLosAt then data.suppNoLosAt = now end
             if now - data.suppNoLosAt > 8 then
@@ -69,26 +69,7 @@ BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
                 aim = rec.pos + Vector(0, 0, 40)
             end
             if aim then
-                local bull = data.suppBullseye
-                if not IsValid(bull) then
-                    bull = ents.Create("npc_bullseye")
-                    if IsValid(bull) then
-                        bull:SetPos(aim)
-                        bull:SetKeyValue("spawnflags", "196608")
-                        bull:Spawn()
-                        bull:SetNoDraw(true)
-                        bull:SetSolid(SOLID_NONE)
-                        bull:SetHealth(999999)
-                        data.suppBullseye = bull
-                        npc:AddEntityRelationship(bull, D_HT, 99)
-                    end
-                else
-                    bull:SetPos(aim)
-                end
-                if IsValid(bull) and npc.SetEnemy then
-                    npc:SetEnemy(bull)
-                    if npc.UpdateEnemyMemory then npc:UpdateEnemyMemory(bull, aim) end
-                end
+                CAI.FireAim.Aim(data, aim)
             else
                 if IsValid(enemy) and npc:GetPos():DistToSqr(enemy:GetPos()) < 400 * 400 then
                     BR.StopSuppressing(data)
@@ -118,6 +99,17 @@ BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
             data.suppNoLosAt = nil
             data.suppressUntil = nil
             data.planPending = "suppress_done"
+        end
+        do
+            local wep = npc:GetActiveWeapon()
+            if IsValid(wep) and wep.Clip1 and wep:Clip1() > 0 and wep:Clip1() < (wep.GetMaxClip1 and wep:GetMaxClip1() or wep:Clip1()) * 0.3 then
+                local reloading = npc.IsCurrentSchedule and npc:IsCurrentSchedule(SCHED_RELOAD)
+                if not reloading and CurTime() > (data._tacticalReloadAt or 0) then
+                    data._tacticalReloadAt = CurTime() + 2.0
+                    data._reloadingAt = CurTime()
+                    npc:SetSchedule(SCHED_RELOAD)
+                end
+            end
         end
         return
     end
@@ -348,7 +340,7 @@ BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
         if now - (data.combatMoveAt or 0) > 2.2 then
             data.moveTarget = nil
             data.fireUntil = now + 1.6
-            npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
+            CAI.Schedule(data, SCHED_ESTABLISH_LINE_OF_FIRE)
         end
         CAI.FriendlyFire.Update(data)
         return
@@ -379,7 +371,7 @@ BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
                 data.fireUntil = now + pcfg.BurstDuration
                 data.moveTarget = nil
                 data.fighting = nil
-                npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
+                CAI.Schedule(data, SCHED_ESTABLISH_LINE_OF_FIRE)
                 CAI.FriendlyFire.Update(data)
                 return
             end
@@ -470,9 +462,32 @@ BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
         if not data.fighting or (not firing and CurTime() - (data.fightSchedAt or 0) > CAI.Config.Engage.RetryGap) then
             data.fighting = true
             data.fightSchedAt = CurTime()
-            npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
+            CAI.Schedule(data, SCHED_ESTABLISH_LINE_OF_FIRE)
         end
         return
+    end
+
+    do
+        local wep = npc:GetActiveWeapon()
+        if IsValid(wep) and wep.Clip1 and wep:Clip1() > 0 and wep:Clip1() < (wep.GetMaxClip1 and wep:GetMaxClip1() or wep:Clip1()) * 0.3 then
+            local reloading = npc.IsCurrentSchedule and npc:IsCurrentSchedule(SCHED_RELOAD)
+            if not reloading and CurTime() > (data._tacticalReloadAt or 0) then
+                data._tacticalReloadAt = CurTime() + 2.0
+                data._reloadingAt = CurTime()
+                npc:SetSchedule(SCHED_RELOAD)
+            end
+        end
+    end
+
+    -- Close-range backoff even when visible: prevents face-off stand-and-deliver.
+    if dist < CAI.Config.Engage.PointBlank * 2 and CAI.Util.Sees(npc, enemy)
+        and now - (data.backoffAt or 0) > 2 then
+        data.backoffAt = now
+        data.combatMoveAt = now
+        local away = npc:GetPos() - enemy:GetPos()
+        away.z = 0 away:Normalize()
+        local dest = CAI.Nav.SafeOffset(npc:GetPos(), away, 200)
+        if dest then CAI.Nav.MoveTo(data, dest, "run") end
     end
 
     if dist < CAI.Config.Engage.PointBlank and not CAI.Util.Sees(npc, enemy) then
@@ -512,7 +527,7 @@ BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
         if now - (data.advanceAt or 0) > 2 then
             data.advanceAt = now
             if tryMoveShoot() then return end
-            npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
+            CAI.Schedule(data, SCHED_ESTABLISH_LINE_OF_FIRE)
         end
     end
     if data.squad and #data.squad.members > 1 then

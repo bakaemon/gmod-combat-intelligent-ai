@@ -11,7 +11,7 @@ function BR.SetPhase(data, newPhase, intent, reason, overrideCommitment)
     local urgent = urgency == "urgent"
     local attention = urgency == "attention"
     local planPending = data.planPending
-    local planPendingStuck = planPending and (CurTime() - data.phaseSince > 0.5)
+    local planPendingStuck = planPending and (CurTime() - data.phaseSince > CAI.Config.OODA.PhaseCooldown)
 
     if not urgent and not attention and not planPendingStuck and not overrideCommitment then
         if CurTime() < committedUntil then
@@ -60,17 +60,25 @@ function BR.SetPhase(data, newPhase, intent, reason, overrideCommitment)
     data.planPending = nil
 
     if data.reflex then data.reflex.urgency = nil end
+    CAI.FireAim.ClearEnemy(data)
 end
 
-BR.StopSuppressing = function(data)
-    if IsValid(data.suppBullseye) then
-        local npc = data.ent
-        if IsValid(npc) and npc.GetEnemy and npc:GetEnemy() == data.suppBullseye then
-            npc:SetEnemy(NULL)
-        end
-        data.suppBullseye:Remove()
+-- Targeted schedule throttle: only blocks re-issuing the same schedule within
+-- SchedCooldown, and protects mid-reload from interruption.
+function CAI.Schedule(data, sched)
+    local npc = data.ent
+    if sched ~= SCHED_RELOAD and data._schedAt and data._lastSched
+        and sched == data._lastSched
+        and CurTime() - data._schedAt < CAI.Config.Engage.SchedCooldown then
+        return
     end
-    data.suppBullseye = nil
+    if sched ~= SCHED_RELOAD and data._reloadingAt
+        and CurTime() - data._reloadingAt < 1.5 then
+        return
+    end
+    data._schedAt = CurTime()
+    data._lastSched = sched
+    npc:SetSchedule(sched)
 end
 
 function BR.FireSchedule(data)
@@ -78,15 +86,15 @@ function BR.FireSchedule(data)
     if CAI.WeaponIntel.IsMelee(npc) then
         local e = npc.GetEnemy and npc:GetEnemy()
         if IsValid(e) and npc.HasCondition and COND_CAN_MELEE_ATTACK1 and npc:HasCondition(COND_CAN_MELEE_ATTACK1) then
-            npc:SetSchedule(SCHED_MELEE_ATTACK1)
+            CAI.Schedule(data, SCHED_MELEE_ATTACK1)
         elseif IsValid(e) then
-            npc:SetSchedule(SCHED_CHASE_ENEMY)
+            CAI.Schedule(data, SCHED_CHASE_ENEMY)
         else
-            npc:SetSchedule(SCHED_IDLE_STAND)
+            CAI.Schedule(data, SCHED_IDLE_STAND)
         end
         return
     end
-    npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
+    CAI.Schedule(data, SCHED_ESTABLISH_LINE_OF_FIRE)
 end
 
 function BR.Prefire(data, pos)
@@ -96,33 +104,14 @@ function BR.Prefire(data, pos)
         return
     end
     if not CAI.CVBool("cai_suppression") then
-        npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
+        CAI.Schedule(data, SCHED_ESTABLISH_LINE_OF_FIRE)
         return
     end
     local aim = pos + Vector(0, 0, 40)
-    local bull = data.suppBullseye
-    if not IsValid(bull) then
-        bull = ents.Create("npc_bullseye")
-        if not IsValid(bull) then return end
-        bull:SetPos(aim)
-        bull:SetKeyValue("spawnflags", "196608")
-        bull:Spawn()
-        bull:SetNoDraw(true)
-        bull:SetSolid(SOLID_NONE)
-        bull:SetHealth(999999)
-        data.suppBullseye = bull
-        npc:AddEntityRelationship(bull, D_HT, 99)
-    else
-        bull:SetPos(aim)
-    end
-    if npc.SetEnemy then
-        npc:SetEnemy(bull)
-        if npc.UpdateEnemyMemory then npc:UpdateEnemyMemory(bull, aim) end
-    end
-    data.prefireUntil = CurTime() + 1.2
+    CAI.FireAim.Aim(data, aim, 1.2)
 end
 
 -- Think: one brain tick for a single NPC. Tick order:
 --   perceive -> fade memory -> decay suppression -> regen morale/proficiency
---   -> reflex -> OODA (decide) -> exec (ExecPhase[phase]) -> prefire/bullseye cleanup.
+--   -> reflex -> OODA (decide) -> FireAim.Tick (auto-cleanup) -> exec (ExecPhase[phase]).
 -- Light-touch NPCs (e.g. hunters) only perceive + fade, skipping decisions.
