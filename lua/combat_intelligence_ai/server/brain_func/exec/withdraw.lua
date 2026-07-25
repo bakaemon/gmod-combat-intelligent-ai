@@ -55,6 +55,7 @@ end
 
 local function safeRetreat(data, p, nearPos, curD)
     if not p then return false end
+    if not IsValid(navmesh.GetNearestNavArea(p)) then return false end
     if CAI.CVBool("cai_danger_avoid") and CAI.Memory.AvoidPos(data, p,
             CAI.Config.SelfPreserve.DangerAvoid.AdvanceIntoRadius) then
         return false
@@ -110,7 +111,7 @@ BR.ExecPhase[CAI.PHASE.WITHDRAW] = function(data)
                     local p = CAI.Nav.SafeOffset(npc:GetPos(), dir, ecfg.Step)
                     if p and safeRetreat(data, p, nearPos, curD) then dest = p break end
                 end
-                if dest then CAI.Nav.MoveTo(data, dest, "run") end
+if dest and IsValid(navmesh.GetNearestNavArea(dest)) then CAI.Nav.MoveTo(data, dest, "run") end
                 if not data.saidRetreat then
                     data.saidRetreat = true
                     CAI.Voice.Speak(data, "retreat")
@@ -125,7 +126,7 @@ BR.ExecPhase[CAI.PHASE.WITHDRAW] = function(data)
             if away:LengthSqr() < 1 then away = Vector(1, 0, 0) end
             away:Normalize()
             local dest = CAI.Nav.SafeOffset(npc:GetPos(), away, 280)
-            if dest then CAI.Nav.MoveTo(data, dest, "run") end
+            if dest and IsValid(navmesh.GetNearestNavArea(dest)) then CAI.Nav.MoveTo(data, dest, "run") end
             return
         end
 
@@ -160,7 +161,7 @@ BR.ExecPhase[CAI.PHASE.WITHDRAW] = function(data)
                 away:Normalize()
                 dest = CAI.Nav.SafeOffset(npc:GetPos(), away, 700)
             end
-            if dest then CAI.Nav.MoveTo(data, dest, "run") end
+            if dest and IsValid(navmesh.GetNearestNavArea(dest)) then CAI.Nav.MoveTo(data, dest, "run") end
             if not data.saidRetreat then
                 data.saidRetreat = true
                 CAI.Voice.Speak(data, "panic")
@@ -222,7 +223,7 @@ BR.ExecPhase[CAI.PHASE.WITHDRAW] = function(data)
             -- Fallback: run away from nearest enemy
             local away = (npc:GetPos() - nearPos):GetNormalized() * 600
             local dest = CAI.Nav.SafeOffset(npc:GetPos(), away, 600)
-            if dest then
+            if dest and IsValid(navmesh.GetNearestNavArea(dest)) then
                 data.retreatDest = dest
                 data.retreatMoveAt = CurTime()
                 CAI.Nav.MoveTo(data, dest, "run")
