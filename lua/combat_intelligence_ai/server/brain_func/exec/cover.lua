@@ -19,6 +19,30 @@ BR.ExecPhase[CAI.PHASE.COVER] = function(data)
                 pos = nil
             end
         end
+        if pos and data.squad then
+            for _, m in ipairs(data.squad.members) do
+                if IsValid(m) and m ~= npc and npc:GetPos():DistToSqr(m:GetPos()) < 150 * 150 then
+                    pos = nil
+                    break
+                end
+            end
+            if pos and #data.squad.members > 1 then
+                local closest = math.huge
+                local center = CAI.SquadFunc.SquadCenterOfMass(data.squad, npc)
+                for _, m in ipairs(data.squad.members) do
+                    if IsValid(m) and m ~= npc then
+                        local d = pos:DistToSqr(m:GetPos())
+                        if d < closest then closest = d end
+                    end
+                end
+                if closest > 600 * 600 and center then
+                    local dir = (center - pos):GetNormalized()
+                    dir.z = 0
+                    local nudged = CAI.Nav.SafeOffset(pos, dir, 300)
+                    if nudged then pos = nudged end
+                end
+            end
+        end
         if pos then
             data.cover = { pos = pos, since = CurTime() }
             data.coverBounces = (data.coverBounces or 0) + 1

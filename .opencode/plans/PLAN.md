@@ -1,814 +1,574 @@
-# OODA Combat Architecture — Implementation Plan
+# Squad Architecture Overhaul
 
 ## Principle
 
-Replace the polling state machine with a three-tier OODA-driven architecture. Key insight: an NPC can execute a high-level plan while simultaneously reacting to immediate threats — the reaction biases movement but doesn't cancel the plan.
+Replace the current per-NPC independent decision-making with a **squad-first** architecture. Individual COAs are subordinate to squad orders. Spatial memory, patrol routing, and tactical planning become squad-level concerns, not per-NPC.
 
-**No runtime compatibility bridge.** A `cai_ooda_mode` convar allows dev-time toggling (server restart required), but both paths are never wired simultaneously in production. This is an atomic cut-over.
+The decision pipeline becomes:
+
+```
+SquadOrder (role-based) → PreTarget (emergency) → Target (individual)
+```
+
+Squad orders fire **without** requiring `ctx.visible` — squad flags already encode intent from the squad planner.
 
 ---
 
-## Audit References (Pre-Migration Inventory)
+## Audit: Current Squad Infrastructure
 
-### Current state architecture
+### What exists already (in sv_squad.lua)
 
-```
-CAI.STATE = { IDLE=0, PATROL=1, ENGAGE=2, COVER=3, FLANK=4, SUPPRESS=5,
-               SEARCH=6, RETREAT=7, INVESTIGATE=8, REGROUP=9,
-               ROOM_CLEAR=10, BOUNDED=11 }
-BR.Exec[0..11]  — per-state exec handlers (12 files)
-BR.COA.PreTarget[1..8] + BR.COA.Target[1..10]  — COA cascade (18 files)
-```
+| Function | Purpose | Migrate? |
+|----------|---------|----------|
+| `SQ.Create` | Squad table factory | Keep |
+| `SQ.AddMember` / `SQ.RemoveMember` | Membership management | Keep |
+| `SQ.Place` | Auto-place NPC into nearest squad | Keep |
+| `SQ.AssignRoles` | Role assignment (LEADER, SUPPRESSOR, etc.) | Keep |
+| `SQ.Broadcast` / `SQ.OnComm` | Squad comms system | Keep |
+| `SQ.AnyoneEngaging` / `SQ.Suppressing` | Squad-level state queries | Keep |
+| `SQ.FormationSlot` | Formation-relative position from leader | Keep |
+| `SQ.UpdateFormation` | Formation type (WEDGE/LINE/etc) selection | Keep |
+| `SQ.Plan` | Tactical planner (push/flank/hold/retreat) | **Migrate to squad_func/plan.lua** |
 
-### All data.state/CAI.STATE references by file
+### What's broken
 
-**SUBSYS (need updating)**:
+1. **COA priority**: Squad orders (`suppress_order.lua`, `flank_order.lua`, `bound_order.lua`, `separated.lua`) are in the Target list AFTER `engage_target.lua`. They never fire when an enemy is visible because `engage_target` wins first. All 4 also require `ctx.visible` — making them doubly unreachable.
 
-| File | Lines | What it does | Complexity |
-|------|-------|-------------|------------|
-| `state.lua` | 6,37,38,55,58 | SetState def, state write, COVER/PATROL exit checks | High |
-| `think.lua` | 46-48,56,68,73 | redispatch loop, Exec lookup, SUPPRESS cleanup | High |
-| `sv_squad.lua` | 136,137,141,143,159,160,161,166,169,181,185,204,205,218,333 | 9 state checks, 3 SetState calls, 3 d.state reads on other NPCs | High |
-| `sv_debug.lua` | 30,52,118,119 | state read, net.WriteUInt(5), STATE_NAMES lookup, state age | Medium |
-| `sv_sound.lua` | 45,53 | state check (IDLE/PATROL), SetState to INVESTIGATE | Low |
-| `sv_morale.lua` | 36,88,91 | state checks (IDLE/PATROL), SetState to INVESTIGATE | Low |
-| `sv_target.lua` | 60 | state check (SUPPRESS) for bullseye guard | Low |
-| `sv_darkness.lua` | 101 | state check (!IDLE) for darkness vision | Low |
-| `sv_cover.lua` | 238 | SetState to COVER (cover_blown_relocate) | Low |
-| `perceive.lua` | 25 | state check (COVER) for forceRecover | Low |
-| `react/flinch.lua` | 138,184 | state checks (SUPPRESS, ENGAGE) for legacy flinch | Low |
-| `sv_manager.lua` | 44 | CAI.STATE.IDLE in data init | Low |
-| `sv_brain.lua` | 7,11,20,22 | comments only, no runtime impact | None |
+2. **Minimal ctx in ooda.lua**: The `ctx` table passed to COAs is:
+   ```lua
+   { data, npc, enemy, rec, visible }
+   ```
+   Missing: `holdUnknown`, `dangerAvoid`, `squadCovering` — 3 COA files reference these as nil.
 
-**DECIDE files (to be deleted — 18 files)**:
+3. **No squad patrol**: `exec/pre_contact.lua` picks random patrol points per NPC. Squad members wander independently with only loose de-clumping.
 
-All return `CAI.STATE.*` values. Some also read `data.state` for decision logic:
-- `engage.lua:29-30` — reads data.state ==/!= CAI.STATE.COVER for cover-stuck detection
-- `cover_hold.lua:20-22` — reads data.state to check "passive" states
-- `squad_aware.lua:32-46` — reads data.state for commitment scoring
+4. **No formation during combat**: `FormationSlot` is only used in `exec/withdraw.lua:regroup`. No combat exec handler maintains formation spacing.
 
-**EXEC files (to be deleted — 12 files)**:
-
-30 `SetState` calls across 10 files:
-- `suppress.lua` — 5 calls (COVER, ENGAGE, SEARCH)
-- `flank.lua` — 5 calls (ENGAGE, COVER, SEARCH)
-- `room_clear.lua` — 5 calls (PATROL, ENGAGE)
-- `regroup.lua` — 4 calls (PATROL, ENGAGE)
-- `bounded.lua` — 3 calls (COVER, REGROUP, ENGAGE)
-- `cover.lua` — 2 calls (ENGAGE, REGROUP)
-- `search.lua` — 2 calls (PATROL)
-- `investigate.lua` — 2 calls (ENGAGE, PATROL)
-- `retreat.lua` — 2 calls (COVER, ENGAGE)
-- `idle.lua`, `patrol.lua`, `engage.lua` — 0 calls each
-
-**SHARED files**:
-- `sh_config.lua:4-17` — CAI.STATE definition
-- `sh_config.lua:19-20` — CAI.STATE_NAMES reverse mapping
-- `sh_text.lua:3-14` — T.States text labels (indexed by STATE value)
-
-**CLIENT files**:
-- `cl_debug.lua:9` — net.ReadUInt(5) for state
-- `cl_debug.lua:30-37` — STATE_COLORS (keyed by old STATE values 2-7)
-- `cl_debug.lua:56,61` — color + name lookups
-
-**Zero-dependency files** (no state references):
-`sv_suppression.lua`, `sv_memory.lua`, `sv_navigation.lua`, `sh_net.lua`
+5. **All squad logic in one file**: `sv_squad.lua` is 471 lines mixing membership, comms, planning, and formation. No module boundary.
 
 ---
 
-## Reusability Analysis
-
-### COA Files (decide/*.lua) — ~95% condition logic transfers verbatim
-
-All decision conditions (suppression checks, distance checks, morale, weapon intel, squad state, melee threat scans, probability rolls) copy across unchanged. Only three categories change:
-
-| Change type | Count | Details |
-|-------------|-------|---------|
-| `data.state` → `CAI.PhaseIs()` | 3 files | `cover_hold.lua:20-22` (5 reads), `engage.lua:29-30` (2 reads), `squad_aware.lua:32-47` (5 reads) |
-| Return value mapping | 16 files | Every `CAI.STATE.X` return becomes `PHASE.Y, "intent", duration`. See full map below. |
-| Duration added | all | New 3rd return value `commitment_duration` (seconds) |
-
-**Full state→phase return mapping**:
-
-| Old return | New return | Files |
-|------------|------------|-------|
-| `CAI.STATE.PATROL` | `PHASE.PRE_CONTACT, "patrol", 5` | patrol.lua |
-| `CAI.STATE.INVESTIGATE` | `PHASE.PRE_CONTACT, "investigate", 4-5` | lost_target.lua, squad_aware.lua |
-| `CAI.STATE.SEARCH` | `PHASE.PRE_CONTACT, "search", 4` | lost_target.lua |
-| `CAI.STATE.ENGAGE` | `PHASE.ENGAGE, var, 2-2.5` | engage.lua (9 variants), melee_chase.lua, melee_swarm.lua |
-| `CAI.STATE.SUPPRESS` | `PHASE.ENGAGE, "suppress", 3` | lost_target.lua, squad_suppress_order.lua |
-| `CAI.STATE.COVER` | `PHASE.COVER, var, 2-2.5` | cover_hold.lua, engage.lua, lost_target.lua, squad_aware.lua |
-| `CAI.STATE.FLANK` | `PHASE.MANEUVER, "flank", 1.5-4` | flank_protect.lua, flank.lua, lost_target.lua, melee_chase.lua, squad_flank_order.lua |
-| `CAI.STATE.ROOM_CLEAR` | `PHASE.MANEUVER, "room_clear", 4` | room_clear.lua |
-| `CAI.STATE.BOUNDED` | `PHASE.MANEUVER, "bound", 3` | squad_bound_order.lua |
-| `CAI.STATE.RETREAT` | `PHASE.WITHDRAW, var, 3-5` | morale_broken.lua, morale_panic.lua, cover_hold.lua, engage.lua, melee_swarm.lua |
-| `CAI.STATE.REGROUP` | `PHASE.WITHDRAW, "regroup", 4` | lost_target.lua, separated_from_squad.lua, squad_aware.lua |
-
-**Deleted COAs** (2 files — handled by reflex):
-- `emergency_relocate.lua` — `data.forceRecover` → reflex bias toward cover
-- `grenade_scatter.lua` — `data.scatterUntil` → `data.reflex.grenadePos/grenadeUntil`
-
-**All transient fields survive unchanged** (only grenade scatter moves under `data.reflex`): `data.flank`, `data.pinnedCover`, `data.coverBounces`, `data.lastEngageAt`, `data.investigatePos`, `data.suppressUntil`, `data.reinforceTarget`, `data.search`, `data.awaitAt`, `data.escapeCentroid`, `data.pbEnemy`, `data.coverSearchFailures`, `data.squadPlan`, `data.scatterUntil` → `data.reflex.grenadePos/grenadeUntil`. No other structural changes.
-
-### Exec Files (exec/*.lua) — ~97% logic transfers verbatim
-
-All movement, navigation, combat, schedule-setting, and squad coordination logic copies unchanged. Only changes are `SetState` → `planPending`:
-
-| File | Lines | SetState calls | Convert to |
-|------|-------|---------------|------------|
-| `idle.lua` | ~3 | 0 | Copy verbatim to `exec/pre_contact.lua` |
-| `patrol.lua` | 108 | 0 | Copy verbatim to `exec/pre_contact.lua` |
-| `engage.lua` | 416 | 0 | Copy verbatim to `exec/engage.lua` |
-| `search.lua` | 17 | 2 | `data.planPending = "nothing_to_search"/"search_over"` |
-| `investigate.lua` | 33 | 2 | `data.planPending = "spotted"/"investigation_over"` |
-| `cover.lua` | 119 | 2 | `data.planPending = "no_cover"/"reloaded_regroup"` |
-| `retreat.lua` | 213 | 2 | `data.planPending = "reloading_cover"/"engage_target"` |
-| `regroup.lua` | 46 | 4 | `data.planPending = "no_squad"/"spotted"/"reinforced"/"in_formation"` |
-| `bounded.lua` | ~50 | 3 | `data.planPending = "no_bound"/"bound_done"/"push"` |
-| `suppress.lua` | 126 | 5 | `data.planPending = "nothing"/"too_close"/"no_los"/"no_target"/"done"` |
-| `flank.lua` | 171 | 5 | `data.planPending = "contact"/"unavailable"/"completed"/"arrived_nosearch"/"arrived"` |
-| `room_clear.lua` | ~100 | 5 | `data.planPending = "no_door"/"enemy"/"timeout"/"cleared"/"error"` |
-
-### Subsystem Files — 100% logic reuse
-
-All subsystem logic (squad coordination, morale, sound, target, darkness, cover, perceive, react) transfers completely. Only equality checks against `CAI.STATE.*` remap to `CAI.PhaseIs()` calls. No behavioral logic changes.
-
----
-
-## Three-Tier Architecture
-
-| Tier | Name | Runs | Scope | Can change phase? |
-|------|------|------|-------|-------------------|
-| 1 | **Reflex** | Every think tick | Movement bias only. Sets urgency flags. | No |
-| 2 | **OODA** | On plan expiry or urgent trigger | Picks new (phase, intent, duration). Commits. | Yes |
-| 3 | **Exec** | Every think tick | Executes current phase + intent. Signals completion. | No |
-
-### The flow
+## New Module: `squad_func/`
 
 ```
-BR.Think(data, dt):
-  1. OBSERVE: Perceive, memory fade, suppression decay, morale regen, proficiency, CheckStuck
-     → early exit if !CAI.Util.Alive(npc)
-  2. TIER 1 - REFLEX: BR.Reflex(data, dt)
-     → movement bias only, no SetPhase
-     → may set reflex.urgency flag (hierarchical: grenade > melee > suppression)
-   3. TIER 2 - OODA: only if plan expired OR urgency is set OR planPending is set
-     a. OBSERVE: CAI.Target.Evaluate
-     b. ORIENT: build context table (enemy, visibility, suppression, morale, danger)
-     c. DECIDE: run COA cascade → (phase, intent, duration, reason)
-     d. COMMIT: SetPhase (if changed) + set plan.expiresAt
-     e. Clear planPending
-  4. TIER 3 - EXEC: BR.ExecPhase[data.phase](data, dt)
-     → never calls SetPhase
-     → sets data.planPending when work completes naturally
-  5. Cleanup: prefire/bullseye expiry, health regen
+server/squad_func/
+  init.lua        — namespace CAI.SquadFunc, loader
+  plan.lua        — tactical planner (replaces SQ.Plan logic)
+  patrol.lua      — squad patrol planner (single objective + formation routing)
+  formation.lua   — formation state, spacing checks, slot calculation
+  spatial.lua     — squad-shared spatial memory (merged enemy positions)
 ```
 
-### LOD awareness for reflex
-
-Low-LOD NPCs (far away, think every 1-3s) need sub-second reflex for grenades.
-- Reflex always runs regardless of LOD (cheap — only vector math + urgency flag)
-- Grenade/melee threat detection hooks into the scheduler tick, not the think tick
-- If reflex urgency reaches "urgent", force an immediate OODA cycle (skip LOD delay)
-
----
-
-## Phase Enum (replaces CAI.STATE)
-
-```
-PHASE = {
-    PRE_CONTACT = 0,   -- patrolling, searching, investigating, idle
-    ASSESS      = 1,   -- brief evaluation after threat detection (1-3s)
-    ENGAGE      = 2,   -- active firefight: direct_fire, suppress, point_blank
-    MANEUVER    = 3,   -- moving under fire: flank, bound, room_clear, reposition
-    COVER       = 4,   -- deliberate cover: hold, peek_shoot, reload, wait
-    WITHDRAW    = 5,   -- breaking contact: tactical, flee, regroup
-    POST_CONTACT = 6,  -- after fight: rearm, consolidate, listen
-}
-```
-
-Each phase has an **intent** string. Valid intent values map to old state names:
-
-| Phase | Valid Intents | Replaces old states |
-|-------|--------------|---------------------|
-| PRE_CONTACT | "patrol", "search", "investigate", "idle" | PATROL(1), SEARCH(6), INVESTIGATE(8), IDLE(0) |
-| ASSESS | "assess", "evaluate" | — (new) |
-| ENGAGE | "direct_fire", "suppress", "point_blank", "melee" | ENGAGE(2), SUPPRESS(5) |
-| MANEUVER | "flank", "bound", "room_clear", "reposition" | FLANK(4), ROOM_CLEAR(10), BOUNDED(11) |
-| COVER | "hold", "peek_shoot", "reload", "wait" | COVER(3) |
-| WITHDRAW | "tactical", "flee", "regroup" | RETREAT(7), REGROUP(9) |
-| POST_CONTACT | "rearm", "consolidate", "listen" | — (new) |
-
-### Helper function
+### squad_func/init.lua
 
 ```lua
-function CAI.PhaseIs(data, phase, intent)
-    if data.phase ~= phase then return false end
-    if intent and data.phaseIntent ~= intent then return false end
+CAI.SquadFunc = CAI.SquadFunc or {}
+local SF = CAI.SquadFunc
+```
+
+Called from `sv_brain.lua` (or a new loader). Defines the namespace, then includes submodules.
+
+### squad_func/plan.lua — Tactical planner
+
+Replaces `SQ.Plan`'s decision body (lines 274-460 of sv_squad.lua). Runs every 0.5s timer like the current `SQ.Plan`.
+
+**Logic moved over verbatim** from `SQ.Plan`:
+- Battlefield pruning
+- Role assignment (calls `SQ.AssignRoles`)
+- Enemy count / morale / ammo / injured aggregation
+- Squad plan selection: retreat / hold / push / flank / regroup
+- Per-member flag setting: `suppressUntil`, `wantFlank`, `wantBound`, `squadPlan`
+- Fire-team / maneuver-team bound target computation
+- Stagger offset
+
+**Changes from current SQ.Plan:**
+- After computing `squad.plan`, also set a `squad.objectivePos` field — the squad's collective movement target (last known enemy position, patrol objective, etc.)
+- Store `squad.lastContactPos` — where the squad last had enemy contact (for patrol routing)
+
+### squad_func/patrol.lua — Squad patrol planner
+
+New module. Runs per-squad when all members are in PRE_CONTACT (no combat).
+
+**Objective selection (every 0.5s timer):**
+```
+If squad has a patrol objective and it hasn't been reached:
+  → keep current objective
+Else:
+  → pick a new objective from CAI.Battlefield.GetPatrolPoints(squad, leaderPos, RADIUS)
+  → if none found, pick a random nav point within RADIUS of leader
+  → if still none, fall back to current leader position (hold formation)
+```
+
+**Per-member routing:**
+- The squad patrol planner sets `squad.patrolPos` and `squad.patrolKey`
+- Each member's OODA reads `squad.patrolPos` via `ctx` (if in PRE_CONTACT and not searching/investigating)
+- Leader: moves to `squad.patrolPos` directly
+- Followers: compute their formation slot relative to leader's current position + formation-relative offset toward patrol objective
+
+**exec/pre_contact.lua changes:**
+- When in a squad with an active patrol objective AND the NPC is a follower:
+  - Compute `FormationSlot(squad, idx)` relative to leader
+  - `MoveTo(formationSlot, "walk")`
+- Leader uses the squad patrol objective as patrol target
+- When not in a squad: keep current independent patrol logic
+
+### squad_func/formation.lua — Formation state
+
+Migrates `SQ.FormationSlot` and `SQ.UpdateFormation` logic from sv_squad.lua. Adds:
+
+**PositionSpacing check:**
+```lua
+function SF.PositionSpacing(data, pos, minDist)
+    local squad = data.squad
+    if not squad then return true end
+    for _, m in ipairs(squad.members) do
+        if IsValid(m) and m ~= data.ent then
+            if m:GetPos():DistToSqr(pos) < minDist * minDist then
+                return false  -- too close to another member
+            end
+        end
+    end
     return true
 end
 ```
 
-All old `data.state == CAI.STATE.X` checks become `CAI.PhaseIs(data, PHASE.Y, "intent")`.
+**FormationCheck helper:** Returns true if NPC is >FormationBreakRadius from ALL squad members (cohesion check):
+
+```lua
+function SF.FormationCheck(data)
+    local squad = data.squad
+    if not squad or #squad.members <= 1 then return true end
+    local radius = CAI.Config.SquadTactics.FormationBreakRadius or 600
+    local radiusSq = radius * radius
+    for _, m in ipairs(squad.members) do
+        if IsValid(m) and m ~= data.ent then
+            if data.ent:GetPos():DistToSqr(m:GetPos()) < radiusSq then
+                return true  -- at least one squadmate within range
+            end
+        end
+    end
+    return false  -- isolated
+end
+```
+
+Called from exec handlers (bound, direct_fire) every OODA tick. When false, the NPC sets `planPending` to force a re-plan that SquadOrder's `separated` will catch.
+
+**SquadCenterOfMass helper:**
+```lua
+function SF.SquadCenterOfMass(squad, filterSelf, maxDist)
+    local count, acc = 0, Vector()
+    for _, m in ipairs(squad.members) do
+        if IsValid(m) and (not filterSelf or m ~= filterSelf) then
+            local d = maxDist and filterSelf and filterSelf:GetPos():DistToSqr(m:GetPos()) or 0
+            if not maxDist or d < maxDist * maxDist then
+                acc = acc + m:GetPos()
+                count = count + 1
+            end
+        end
+    end
+    if count == 0 then return nil end
+    return acc / count
+end
+```
+
+**Clustering prevention for exec handlers:**
+- `exec/engage.lua`: At end of direct_fire path, if in a squad and another member is within 200 units, nudge sideways
+- `exec/cover.lua`: When picking cover, reject positions too close to other squad members; prefer positions within mutual support range (200-500 units of at least one ally)
+
+### squad_func/spatial.lua — Squad-shared spatial memory
+
+**Squad enemy map merge:**
+- Each think tick (or every 0.5s via the squad timer), each NPC writes its freshest enemy position to a shared map on the squad object:
+  ```lua
+  if not squad.sharedEnemies then squad.sharedEnemies = {} end
+  local enemy, rec = CAI.Memory.FreshestEnemy(data)
+  if rec then
+      squad.sharedEnemies[data.ent] = { pos = rec.pos, t = CurTime(), enemy = enemy }
+  end
+  ```
+- `CAI.SquadFunc.FreshestEnemy(squad)` returns the most recent shared enemy across all members
+- NPCs can read `squad.sharedEnemies` for zero-latency enemy sharing
+
+**Integration:**
+- `CAI.Target.Evaluate` could prefer squad-shared enemy over individual memory
+- `ooda.lua` ctx could include `squadEnemy = SF.FreshestEnemy(squad)`
+
+This is optional/lowest-priority — the existing comms-based sharing works with latency. Mark as **Phase 2** if desired.
 
 ---
 
-## Data Model Changes
+## COA Architecture Changes
 
-### New per-NPC fields (sv_manager.lua MG.Register)
-
-```lua
-data.phase = PHASE.PRE_CONTACT         -- replaces data.state
-data.phaseIntent = "patrol"            -- NEW: sub-behavior within phase
-data.prevPhase = nil                   -- replaces prevState
-data.phaseSince = CurTime()            -- replaces stateSince
-data.lastDecision = "registered"
-data.plan = {
-    expiresAt = CurTime() + 5,         -- when to next run OODA
-    started = CurTime(),
-    reason = "registered",
-    committedUntil = CurTime() + 0.5,  -- minimum commitment (sunk-cost updated)
-}
-data.reflex = {
-    bias = nil,                        -- { vec = Vector, until = number } accumulated movement bias
-    urgency = nil,                     -- nil / "attention" / "urgent"
-    grenadePos = nil,
-    grenadeUntil = nil,
-    emergencyCover = nil,
-    emergencyUntil = nil,
-    meleeThreatAt = nil,
-}
-data.planPending = nil                 -- set by exec or squad to trigger early OODA
-```
-
-`data.state`, `data.stateSince`, `data.prevState` are **removed**. Every old reference is updated.
-
-### Data init migration
-
-`MG.Register` (runs on NPC spawn) initializes the new fields. Existing NPCs on a running server will lack them — a **server restart or map change** is required. The entire AI relies on `data.phase`, so old NPCs without it will no-op (phase defaults to nil, exec handler does nothing) until restart.
-
----
-
-## The Reflex Layer (react/ — modular)
-
-`react.lua` is a module loader. Individual handlers live under `react/`:
-
-```
-server/brain_func/react.lua                 -- loader
-server/brain_func/react/shared.lua          -- BR.IsCommitted + BR.UnderFire (both modes)
-server/brain_func/react/reflexes/           -- BR.Reflex handlers (mode=1)
-    grenade_dodge.lua                       -- dodge vector away from grenade
-    melee_dodge.lua                         -- backpedal from melee threat
-    suppression_jink.lua                    -- bias toward cover or away from fire
-server/brain_func/react/flinch.lua          -- legacy BR.Flinch (mode=0)
-```
-
-Architecture: `BR.Reflex.Handlers[]` — each file does `table.insert(BR.Reflex.Handlers, fn(data, dt))`, returning `(bias_vec, urgency)` or nil. `BR.Reflex` iterates all handlers, accumulates bias vectors, and tracks the highest urgency level.
-
-### Design rules
-- Runs every think tick (including low-LOD)
-- Produces only a movement bias vector + animation override
-- Never calls SetPhase
-- Can set `reflex.urgency` flag to influence next OODA cycle
-
-### Actions handled
-1. **Under-fire jinking** (existing Flinch logic for mode=0; suppression_jink for mode=1)
-2. **Grenade dodge** — bias away from `reflex.grenadePos`
-3. **Melee proximity dodge** — backpedal from nearest melee threat
-
-### Urgency hierarchy (single winner per tick)
-
-Priority order (highest wins):
-1. Melee enemy within PointBlank → `"urgent"`
-2. Grenade blast radius → `"urgent"` if within 1s of detonation, else `"attention"`
-3. Suppression > PinnedAt → `"attention"`
-4. Single shot received → `nil` (movement bias only)
-
-"urgent" > "attention" > nil. `BR.Reflex` picks the highest across all handlers.
-
-### Movement bias application
-Bias is applied in `CAI.Nav.MoveTo`: planned destination + `reflex.bias.vec`
-This is the key architectural change: reflex modifies *where* the NPC moves, not *what* the NPC plans to do.
-
-### LOD handling for reflex
-- Reflex itself runs every think tick (trivially cheap)
-- Grenade dodge uses hooks from `sv_suppression.lua` to set `reflex.grenadePos/Until` immediately, not waiting for the next think tick
-- If urgency reaches "urgent", an immediate OODA cycle is forced (skip LOD delay, overrides plan)
-
----
-
-## The OODA Cycle (ooda.lua)
-
-### COA registration
+### New evaluation order
 
 ```lua
-BR.COA = BR.COA or {}
-BR.COA.PreTarget = BR.COA.PreTarget or {}   -- runs before target eval
-BR.COA.Target = BR.COA.Target or {}         -- runs after target eval
+-- ooda.lua
+local phase, intent, duration, reason
+
+-- 1. SquadOrder (role-based, highest priority)
+for _, coa in ipairs(BR.COA.OODA.SquadOrder) do
+    phase, intent, duration, reason = coa(ctx)
+    if phase then break end
+end
+
+-- 2. PreTarget (emergency, needs squad override override)
+if not phase then
+    for _, coa in ipairs(BR.COA.OODA.PreTarget) do
+        phase, intent, duration, reason = coa(ctx)
+        if phase then break end
+    end
+end
+
+-- 3. Target (individual decision)
+if not phase then
+    for _, coa in ipairs(BR.COA.OODA.Target) do
+        phase, intent, duration, reason = coa(ctx)
+        if phase then break end
+    end
+end
 ```
 
-Each COA file does:
+### SquadOrder COA channel
+
+New channel in `decide.lua`:
+
 ```lua
-table.insert(BR.COA.Target, function(ctx)
-    if not condition then return end
-    return PHASE.ENGAGE, "direct_fire", 2.5, "engage_target"
+BR.COA.OODA.SquadOrder = {}
+
+include(DIR .. "suppress_order.lua")  -- now inserts into SquadOrder
+include(DIR .. "flank_order.lua")     -- now inserts into SquadOrder
+include(DIR .. "bound_order.lua")     -- now inserts into SquadOrder
+include(DIR .. "separated.lua")       -- now inserts into SquadOrder
+```
+
+### SquadOrder COA changes
+
+Each of the 4 files changes from `table.insert(BR.COA.Target, ...)` to `table.insert(BR.COA.SquadOrder, ...)` **and removes the `ctx.visible` guard:**
+
+**suppress_order.lua:**
+```lua
+table.insert(BR.COA.SquadOrder, function(ctx)
+    if ctx.data.suppressUntil and CurTime() < ctx.data.suppressUntil then
+        return CAI.PHASE.ENGAGE, "suppress", 3, "squad_suppress_order"
+    end
 end)
 ```
 
-Include order determines priority (first to return non-nil wins).
-
-### COA signature
-```
-(ctx) → (phase, intent, commitment_duration, reason)  or  nil
-```
-
-ctx table:
+**flank_order.lua:**
 ```lua
-{
-    data, npc,
-    enemy, rec, visible,
-    suppressed = bool,
-    panic = bool,
-    morale = number,
-    inDanger = bool, dangerInfo,
-    enemyDist = number,
-    weaponEmpty = bool,
-    inMelee = bool, meleeCount, meleeDist,
+table.insert(BR.COA.SquadOrder, function(ctx)
+    if ctx.data.wantFlank then
+        ctx.data.wantFlank = nil
+        return CAI.PHASE.MANEUVER, "flank", 4, "squad_flank_order"
+    end
+end)
+```
+
+**bound_order.lua:**
+```lua
+table.insert(BR.COA.SquadOrder, function(ctx)
+    if ctx.data.wantBound and ctx.data.boundTarget then
+        ctx.data.wantBound = nil
+        return CAI.PHASE.MANEUVER, "bound", 3, "squad_bound_order"
+    end
+end)
+```
+
+**separated.lua:**
+```lua
+table.insert(BR.COA.SquadOrder, function(ctx)
+    local data, npc = ctx.data, ctx.npc
+    if not data.squad or not IsValid(data.squad.leader) then return end
+    if data.squad.leader == npc or data.role == CAI.ROLE.FLANKER then return end
+    local radius = CAI.Config.SquadTactics.FormationBreakRadius or 600
+    if npc:GetPos():DistToSqr(data.squad.leader:GetPos()) <= radius * radius then return end
+    -- Don't regroup if actively engaging a nearby enemy
+    local enemyRange = ctx.enemy and npc:GetPos():Distance(ctx.enemy:GetPos()) or math.huge
+    if enemyRange <= CAI.WeaponIntel.OwnRange(npc) then return end
+    return CAI.PHASE.WITHDRAW, "regroup", 4, "separated_from_squad"
+end)
+```
+
+### Target COA list (reduced)
+
+After removing the 4 squad files, the Target list is:
+
+```lua
+include(DIR .. "pinned.lua")
+include(DIR .. "engage_target.lua")
+include(DIR .. "lost_target_coa.lua")
+include(DIR .. "squad_aware.lua")
+include(DIR .. "pre_contact.lua")
+```
+
+### PreTarget (unchanged)
+
+```lua
+include(DIR .. "flank_protect.lua")
+include(DIR .. "melee_threat.lua")
+include(DIR .. "morale_break.lua")
+include(DIR .. "panic.lua")
+include(DIR .. "room_clear_coa.lua")
+```
+
+### Richer ctx for all COAs
+
+```lua
+local ctx = {
+    data = data, npc = npc,
+    enemy = enemy, rec = rec, visible = visible,
+    holdUnknown = CAI.CVBool("cai_hold_unknown"),
+    dangerAvoid = CAI.CVBool("cai_danger_avoid"),
+    squadCovering = data.squad and function()
+        return CAI.Squad.AnyoneEngaging(data.squad, npc)
+            or CAI.Squad.Suppressing(data.squad, npc)
+    end or function() return false end,
 }
 ```
 
-### COA priority order
-
-**PreTarget** (no enemy needed):
-1. `morale_break.lua` — broken morale → (WITHDRAW, flee, 5s); if cornered (WITHDRAW, flee, 3s -> fallback to (ENGAGE, melee, 1s))
-2. `panic.lua` — panicked coward or unarmed → (WITHDRAW, flee, 4s)
-3. `flank_protect.lua` — keep existing flank alive → (MANEUVER, flank, 1.5s)
-4. `melee_threat.lua` — swarmed by melee (non-melee NPCs) → (ENGAGE, point_blank, 2s) if can fight, else (WITHDRAW, flee, 3s)
-5. `room_clear_coa.lua` — squad door clearing → (MANEUVER, room_clear, 4s)
-
-**Target** (need combat target):
-1. `pinned.lua` — suppressed → (COVER, hold, 2.5s) if cover and passive; (COVER, hold, 2.5s) if cover and passed roll; else (WITHDRAW, tactical, 3s). Respects "passive" states: if currently in combat phase, uses cached roll (4-7s) to prevent flapping.
-2. `engage_target.lua` — visible enemy, normal engagement → (ENGAGE, direct_fire, 2.5s) or variants. Handles CQB push, rocket/shotgun avoidance, engagement starvation break, aggressive push, squad retreat.
-3. `lost_target_coa.lua` — enemy valid, not visible → patience-based decision tree. Squad suppress → (ENGAGE, suppress, 3s); separated → (WITHDRAW, regroup, 4s); flanking → (MANEUVER, flank, 1.5s); close to LKP → (COVER, hold, 2s) or (PRE_CONTACT, investigate, 4s); far → (PRE_CONTACT, investigate, 5s); search enabled → (PRE_CONTACT, search, 4s); fallback → (COVER, wait, 2s)
-4. `suppress_order.lua` — squad suppress order active → (ENGAGE, suppress, 3s)
-5. `flank_order.lua` — squad flank order → (MANEUVER, flank, 4s)
-6. `bound_order.lua` — squad bound order → (MANEUVER, bound, 3s)
-7. `separated.lua` — visible enemy, leader > 700u away, out of range → (WITHDRAW, regroup, 4s)
-8. `squad_aware.lua` — no enemy, squad pushing/flanking, hears battle → investigate/battle-cover decision with commitment scoring. Squads sounds with helpScore > commitment → (PRE_CONTACT, investigate, 5s)
-9. `pre_contact.lua` — fallback → (PRE_CONTACT, patrol, 5s)
-
-### Files to create in decide/
-- `morale_break.lua` (replaces morale_broken.lua + morale_panic.lua)
-- `panic.lua` (replaces morale_panic.lua panic path)
-- `flank_protect.lua` (keep, update return signature)
-- `melee_threat.lua` (replaces melee_swarm.lua)
-- `room_clear_coa.lua` (replaces room_clear.lua)
-- `pinned.lua` (replaces cover_hold.lua)
-- `engage_target.lua` (replaces engage.lua + melee_chase.lua)
-- `lost_target_coa.lua` (replaces lost_target.lua)
-- `suppress_order.lua` (replaces squad_suppress_order.lua)
-- `flank_order.lua` (replaces squad_flank_order.lua)
-- `bound_order.lua` (replaces squad_bound_order.lua)
-- `separated.lua` (replaces separated_from_squad.lua)
-- `squad_aware.lua` (replaces squad_aware.lua + investigate.lua portion)
-- `pre_contact.lua` (replaces patrol.lua + default fallback)
-
-### Deleted (handled by reflex)
-- `emergency_relocate.lua` → reflex bias toward nearby cover
-- `grenade_scatter.lua` → reflex bias away from grenade
-
-### Deleted (folded)
-- `melee_swarm.lua`, `melee_chase.lua` → `melee_threat.lua` + `engage_target.lua`
-- `flank.lua` → `flank_protect.lua`
-- `squad_aware.lua` old → new `squad_aware.lua` with intent-based commitment
+Note: `squadCovering` creates a new closure each OODA tick. Acceptable for now — optimize only if profiling shows overhead.
 
 ---
 
-## Phase Handlers (exec/*.lua)
+## Exec Handler Changes
 
-### Rule: NEVER call SetPhase
-Instead, set `data.planPending = "reason_string"` to trigger early OODA on the next think tick.
+### exec/pre_contact.lua (patrol only)
 
-### planPending timeout guard
-If `SetPhase` rejects a transition (commitment not expired, not urgent), but `planPending` is set, the NPC would be stuck doing nothing. **Guard**: if the current phase has run for >0.5s and `planPending` is set, `SetPhase` allows the transition regardless of commitment. Uses `data.phaseSince` as proxy (not a dedicated `planPendingSince` timer) — acceptable because the guard is a safety net against deadlock, not precise timing.
-
-### Mapping from old to new
-
-| Old file | New file | SetState calls → planPending |
-|----------|----------|------------------------------|
-| exec/idle.lua | exec/pre_contact.lua | None (was no-op) |
-| exec/patrol.lua | exec/pre_contact.lua | None (stays in phase) |
-| exec/search.lua | exec/pre_contact.lua | 2 → planPending |
-| exec/investigate.lua | exec/pre_contact.lua | 2 → planPending |
-| exec/engage.lua | exec/engage.lua | Already clean (0 calls) |
-| exec/suppress.lua | exec/engage.lua | 5 → planPending |
-| exec/cover.lua | exec/cover.lua | 2 → planPending |
-| exec/flank.lua | exec/maneuver.lua | 5 → planPending |
-| exec/bounded.lua | exec/maneuver.lua | 3 → planPending |
-| exec/room_clear.lua | exec/maneuver.lua | 5 → planPending |
-| exec/retreat.lua | exec/withdraw.lua | 2 → planPending |
-| exec/regroup.lua | exec/withdraw.lua | 4 → planPending |
-
-### New exec files
-- `exec/pre_contact.lua` — patrol, search, investigate, idle (merged from 4 old files)
-- `exec/assess.lua` — brief evaluation phase, threat assessment
-- `exec/engage.lua` — direct_fire, suppress, point_blank (merged from 2 old files)
-- `exec/maneuver.lua` — flank, bound, room_clear, reposition (merged from 3 old files)
-- `exec/cover.lua` — hold, peek_shoot, reload, wait
-- `exec/withdraw.lua` — tactical retreat, flee, regroup (merged from 2 old files)
-- `exec/post_contact.lua` — after fight cleanup, rearm
-
----
-
-## Plan Commitment Model
+When in a squad with an active patrol objective, REPLACE individual patrol logic:
 
 ```lua
-data.plan.expiresAt = CurTime() + commitment_duration
-data.plan.committedUntil = data.plan.expiresAt  -- SetPhase sets this
-```
-
-### Commitment durations (config: CAI.Config.Plan.PhaseDuration)
-
-| Phase | Range | Notes |
-|-------|-------|-------|
-| PRE_CONTACT | 3-6s | Long, no pressure |
-| ASSESS | 1-2.5s | Brief evaluation |
-| ENGAGE | 1.5-3.5s | Combat commitment |
-| MANEUVER | 2.5-5s | Positional movement |
-| COVER | 1.5-3s | Moderate |
-| WITHDRAW | 3-6s | Sticky, hard to interrupt |
-| Default | 1.5s | Fallback |
-
-### Sunk cost bonus
-
-+0.3s per full second in same phase (integer floors), applied to `committedUntil` in SetPhase:
-```lua
-local sunkCost = math.floor(CurTime() - oldPhaseSince) * 0.3
-data.plan.committedUntil = CurTime() + commitment_duration + sunkCost
-```
-Makes the NPC increasingly stubborn about plan changes over time.
-
-### What overrides commitment
-- `reflex.urgency == "urgent"` — immediate replan (ignores committedUntil)
-- `reflex.urgency == "attention"` — allows phase change only if current plan is >50% expired
-- `planPending` stuck for >0.5s — force override (deadlock guard)
-- Normal plan expiry — standard OODA cycle
-
----
-
-## SetPhase (rewrites state.lua)
-
-```lua
-function BR.SetPhase(data, newPhase, intent, reason, overrideCommitment)
-    -- No-op if already in same phase+intent
-    if data.phase == newPhase and data.phaseIntent == intent then return end
-    
-    -- Commitment check
-    local committedUntil = data.plan and data.plan.committedUntil or 0
-    local urgency = data.reflex and data.reflex.urgency
-    local urgent = urgency == "urgent"
-    local attention = urgency == "attention"
-    local planPending = data.planPending
-    local planPendingStuck = planPending and (CurTime() - data.phaseSince > 0.5)
-    
-    if not urgent and not attention and not planPendingStuck and not overrideCommitment then
-        if CurTime() < committedUntil then
-            -- Commitment still active, reject transition
-            return
+local squad = data.squad
+if intent == "patrol" and squad and squad.patrolPos then
+    if npc == squad.leader then
+        -- Leader moves to patrol objective
+        if data.moveTarget and not CAI.Nav.Arrived(data, 80) then return end
+        CAI.Nav.MoveTo(data, squad.patrolPos, "walk")
+    else
+        -- Follower computes formation slot relative to leader
+        local idx = CAI.SquadFunc.SquadIndex(squad, npc)
+        local slot = idx and CAI.Squad.FormationSlot(squad, idx)
+        if slot then
+            CAI.Nav.MoveTo(data, slot, "walk")
         end
     end
-    -- "attention" allows phase change if current plan is >50% expired
-    if attention and not urgent and not planPendingStuck and not overrideCommitment then
-        local elapsed = CurTime() - data.phaseSince
-        local total = committedUntil - data.phaseSince
-        if elapsed < total * 0.5 then
-            return
+    return
+end
+```
+
+When NOT in squad or no squad patrolPos: use current independent patrol logic.
+
+### exec/engage.lua (formation spacing)
+
+At the end of the `direct_fire` path (after line ~510, before returning), add:
+
+```lua
+-- Squad spacing: avoid clustering
+if data.squad then
+    local minDist = CAI.Config.SquadTactics.MinSpacing or 150
+    for _, m in ipairs(data.squad.members) do
+        if IsValid(m) and m ~= npc then
+            local dSq = npc:GetPos():DistToSqr(m:GetPos())
+            if dSq < minDist * minDist then
+                local away = (npc:GetPos() - m:GetPos()):GetNormalized()
+                local dest = CAI.Nav.SafeOffset(npc:GetPos(), away, minDist)
+                if dest then CAI.Nav.MoveTo(data, dest, "run") end
+                break
+            end
         end
     end
-    
-    -- Store previous phase + capture phaseSince before overwrite
-    local oldPhaseSince = data.phaseSince or CurTime()
-    data.prevPhase = data.phase
-    
-    -- Set new phase
-    data.phase = newPhase
-    data.phaseIntent = intent
-    data.phaseSince = CurTime()
-    data.lastDecision = reason
-    
-    -- Set commitment with sunk-cost bonus (use oldPhaseSince before it was overwritten)
-    local defDuration = CAI.Config.Plan.PhaseDuration[newPhase] or 1.5
-    local sunkCost = math.floor(CurTime() - oldPhaseSince) * 0.3
-    data.plan.committedUntil = CurTime() + defDuration + sunkCost
-    data.plan.expiresAt = data.plan.committedUntil
-    data.plan.reason = reason
-    
-    -- Clear transient fields (same as current SetState)
-    data.fighting = nil
-    data.coverPhase = nil
-    data.coverPhaseEnd = nil
-    data.suppFaced = nil
-    data.fleeSched = nil
-    data.investFaced = nil
-    data.retreatDest = nil
-    data.ambush = nil
-    data.meleePhase = nil
-    data.moveTarget = nil
-    data.moveIssuedAt = nil
-    data.patrolTarget = nil
-    if data.phase ~= PHASE.COVER then
-        data.cover = nil
+end
+```
+
+### exec/withdraw.lua (squad-aware retreat)
+
+Replace the individual `awayFromEnemies()` helper with a squad-aware direction that blends away-from-enemies with toward-allies:
+
+```lua
+local function retreatDirection(data, npc)
+    -- Push away from all known enemies (existing logic)
+    local push = Vector()
+    for ent, rec in pairs(data.memory.enemies) do
+        if IsValid(ent) and CAI.Util.Alive(ent) and rec.pos then
+            local v = npc:GetPos() - rec.pos
+            v.z = 0
+            local len = v:Length()
+            if len > 1 then push = push + v * (1 / len) end
+        end
     end
-    
-    -- Clear planPending
-    data.planPending = nil
-    
-    -- Clear urgency (OODA has responded)
-    if data.reflex then data.reflex.urgency = nil end
+    push.z = 0
+
+    -- Pull toward squad center of mass
+    local pull = Vector()
+    local center = data.squad and CAI.SquadFunc.SquadCenterOfMass(data.squad, npc, 2000)
+    if center then
+        pull = center - npc:GetPos()
+        pull.z = 0
+    end
+
+    -- Blend: 70% away from enemies, 30% toward allies
+    local combined
+    if push:LengthSqr() > 1 then
+        push:Normalize()
+        if pull:LengthSqr() > 1 then
+            pull:Normalize()
+            combined = push * 0.7 + pull * 0.3
+        else
+            combined = push
+        end
+    elseif pull:LengthSqr() > 1 then
+        combined = pull
+    else
+        return nil
+    end
+    combined.z = 0
+    return combined:GetNormalized()
+end
+```
+
+Replace all calls to `awayFromEnemies(data, npc)` with `retreatDirection(data, npc)` throughout `withdraw.lua`. The fallback escape direction (line 80-83) and `safeRetreat` validation already work with any direction vector — no other changes needed.
+
+**Regroup during retreat** — when in a squad and no immediate enemy threat, the existing `regroup` intent (line 213) already uses `FormationSlot` for squad-relative positioning. No change needed.
+
+### exec/maneuver.lua (formation cohesion during bound)
+
+During bound movement, the maneuver team drifts laterally while fire team suppresses. Without a formation check, bounders can isolate 400+ units from squad — easy picking.
+
+**Bound path** (line 148-189), check formation cohesion before each movement tick:
+
+```lua
+if data.phaseIntent == "bound" then
+    -- Formation cohesion: abort bound if isolated from squad
+    if data.squad and not CAI.SquadFunc.FormationCheck(data) then
+        data.boundTarget = nil
+        data.boundArrived = nil
+        data.planPending = "bound_too_far"
+        return
+    end
+    -- ... rest of existing bound logic ...
+```
+
+When `FormationCheck` returns false (no squadmate within `FormationBreakRadius`), the bound target is cleared and `planPending` triggers a re-plan on the next OODA cycle. SquadOrder's `separated` then catches the NPC and issues `WITHDRAW/regroup`.
+
+**Flank path** (line 102-146) intentionally deviates from formation — flankers are exempt. The 25s stale timer already bounds maximum separation. No cohesion check needed.
+
+### exec/cover.lua (squad-aware cover)
+
+**Spacing rejection** (after `FindBest` returns, before accepting cover):
+
+```lua
+if pos and data.squad then
+    for _, m in ipairs(data.squad.members) do
+        if IsValid(m) and m ~= npc and npc:GetPos():DistToSqr(m:GetPos()) < 150 * 150 then
+            pos = nil  -- too close to squadmate, find different cover
+            break
+        end
+    end
+end
+```
+
+**Mutual support preference** — after spacing rejection, if pos is accepted but far from all squad members, try to nudge toward squad center:
+
+```lua
+if pos and data.squad and #data.squad.members > 1 then
+    local closest = math.huge
+    local center = CAI.SquadFunc.SquadCenterOfMass(data.squad, npc)
+    for _, m in ipairs(data.squad.members) do
+        if IsValid(m) and m ~= npc then
+            local d = pos:DistToSqr(m:GetPos())
+            if d < closest then closest = d end
+        end
+    end
+    -- If no squadmate within 600 units, nudge cover toward squad center
+    if closest > 600 * 600 and center then
+        local dir = (center - pos):GetNormalized()
+        dir.z = 0
+        local nudged = CAI.Nav.SafeOffset(pos, dir, 300)
+        if nudged then pos = nudged end
+    end
 end
 ```
 
 ---
 
-## Grenade Handling (example of reflex > plan)
+## File Manifest
 
-**Old**: Grenade → scatterUntil → grenade_scatter.lua COA → RETREAT state (clears everything)
+### New files (5)
 
-**New**:
-```
-Tick 0: Grenade spawns, suppression hook sets data.reflex.grenadePos/Until
-Tick 0: BR.Reflex runs → computes dodge vector away from grenade
-         → applies as movement bias
-         → sets urgency = "urgent" if within blast timer
-         → NPC stays in current phase (e.g., ENGAGE)
-         → NPC's movement is biased away from grenade while still fighting
-Tick 0: urgency=="urgent" → immediate OODA cycle
-         → COA checks: grenade still active?
-         → If yes and still in danger: COA may choose WITHDRAW or MANEUVER
-         → If grenade expired (dodge already moved NPC to safety): COA chooses normal behavior
-```
+| File | Lines | What it does |
+|------|-------|-------------|
+| `server/squad_func/init.lua` | ~15 | Namespace declaration, submodule loader |
+| `server/squad_func/plan.lua` | ~200 | Tactical planner (migrated from SQ.Plan logic) |
+| `server/squad_func/patrol.lua` | ~100 | Squad patrol objective planner + formation routing |
+| `server/squad_func/formation.lua` | ~60 | Formation slot, update, spacing checks |
+| `server/squad_func/spatial.lua` | ~80 | Squad-shared enemy map merge (Phase 2) |
 
-The NPC dodges the grenade WITHOUT changing state on first tick. The dodge is a movement bias, not a state transition. OODA runs only if the threat persists.
+### Modified files (12)
 
----
+| File | Changes |
+|------|---------|
+| `sv_brain.lua` | Add `include` for `squad_func/init.lua` |
+| `sv_squad.lua` | Remove `SQ.Plan` body, `SQ.FormationSlot`, `SQ.UpdateFormation` logic. Update timer (line 462) to call `CAI.SquadFunc.Plan(squad)`. Remove or redirect `Prof.WrapFn(SQ, "Plan")` |
+| `decide.lua` | Add `BR.COA.OODA.SquadOrder = {}`, include 4 squad COAs in SquadOrder, remaining Target reduced |
+| `ooda.lua` | Add SquadOrder iteration loop, enrich ctx with `holdUnknown`, `dangerAvoid`, `squadCovering` |
+| `suppress_order.lua` | Change `Target` → `SquadOrder`, remove `ctx.visible` guard |
+| `flank_order.lua` | Change `Target` → `SquadOrder`, remove `ctx.visible` guard |
+| `bound_order.lua` | Change `Target` → `SquadOrder`, remove `ctx.visible` guard |
+| `separated.lua` | Change `Target` → `SquadOrder`, remove `ctx.visible` guard |
+| `exec/pre_contact.lua` | Add squad patrol branch (formation-keeping) |
+| `exec/engage.lua` | Add squad clustering check + formation cohesion abort at end of direct_fire |
+| `exec/maneuver.lua` | Add formation cohesion check during bound — abort if isolated from squad, triggers re-plan |
+| `exec/withdraw.lua` | Replace `awayFromEnemies()` with squad-aware `retreatDirection()` blending away-from-enemies + toward-allies |
+| `exec/cover.lua` | Add squad spacing rejection + mutual support range preference in cover selection |
+| `squad_func/plan.lua` | Compute `squadIndex` for each member during plan tick (alongside role assignment) so formation slot lookup is O(1) |
+| `squad_func/formation.lua` | Add `FormationCheck`, `SquadCenterOfMass`, `PositionSpacing` helpers for cohesion |
 
-## Squad Integration
+### Configuration additions
 
-Squad commands (`sv_squad.lua`) continue to set flags (`data.suppressUntil`, `data.wantFlank`, etc.):
-- These flags are read **only during the OODA cycle**, not every tick
-- Squad commands can also set `data.planPending = "squad_order"` to trigger early OODA
-- The exec handler continues its current phase until the plan expires or planPending triggers
-
-### Dual-mode pattern for all Phase 4 changes
-
-Every subsystem update follows the same dual-mode guard pattern. State _checks_ become:
-
-```lua
--- Single line in each subsystem:
-if CAI.CVBool("cai_ooda_mode")
-    and CAI.PhaseIs(data, PHASE.PRE_CONTACT, "idle")  -- mode=1
-   or not CAI.CVBool("cai_ooda_mode")
-    and data.state == CAI.STATE.IDLE                    -- mode=0
-then
-```
-
-State _writes_ (SetState) become:
+In `sh_config.lua`, add fields to the existing `C.SquadTactics` table (line 581):
 
 ```lua
-if CAI.CVBool("cai_ooda_mode") then
-    data.planPending = "reason"    -- triggers OODA cycle
-    data.plan.expiresAt = CurTime()
-else
-    BR.SetState(data, CAI.STATE.X, "reason")
-end
-```
-
-### sv_squad.lua changes
-
-| Location | Old | New (mode=0) | New (mode=1) |
-|----------|-----|--------------|--------------|
-| State checks (9 sites) | `data.state == STATE.X` | same (unchanged) | `CAI.PhaseIs(data, PHASE.Y, intent)` |
-| `SetState(data, CAI.STATE.COVER)` | SetState | same | `planPending = "squad_cover"` |
-| `SetState(data, CAI.STATE.REGROUP)` | SetState | same | `planPending = "squad_regroup"` |
-| `SetState(data, CAI.STATE.REGROUP, "help_request")` | SetState | same | `planPending = "squad_help"` |
-
----
-
-## Other Subsystem Updates (Dual-Mode)
-
-Each subsystem wraps state references in a dual-mode guard. Mode=0 keeps the exact original code; mode=1 uses the new PhaseIs/planPending pattern.
-
-### sv_sound.lua
-- Line 43: `if data.state >= IDLE and data.state <= PATROL` → dual-mode:
-  - mode=0: same
-  - mode=1: `if CAI.PhaseIs(data, PHASE.PRE_CONTACT)`
-- Line 51: `SetState(data, INVESTIGATE, "heard_sound")` → dual-mode:
-  - mode=0: same
-  - mode=1: `planPending = "heard_sound"`, `plan.expiresAt = CurTime()`
-
-### sv_morale.lua
-- Lines 34,86: `data.state == IDLE or data.state == PATROL` → dual-mode:
-  - mode=0: same
-  - mode=1: `CAI.PhaseIs(data, PHASE.PRE_CONTACT)`
-- Line 89: `SetState(data, INVESTIGATE, "squadmate_down")` → dual-mode:
-  - mode=0: same
-  - mode=1: `planPending = "squadmate_down"`, `plan.expiresAt = CurTime()`
-
-### sv_target.lua
-- Line 58: `data.state == CAI.STATE.SUPPRESS` → dual-mode:
-  - mode=0: same
-  - mode=1: `CAI.PhaseIs(data, PHASE.ENGAGE, "suppress")`
-
-### sv_darkness.lua
-- Line 99: `data.state ~= IDLE` → dual-mode:
-  - mode=0: same
-  - mode=1: `data.phase ~= PHASE.PRE_CONTACT or data.phaseIntent ~= "idle"`
-
-### sv_cover.lua
-- Line 236: `SetState(data, COVER, "cover_blown_relocate")` → dual-mode:
-  - mode=0: same
-  - mode=1: `planPending = "cover_blown"`, `plan.expiresAt = CurTime()`
-
-### perceive.lua
-- Line 24: `data.state == COVER` → dual-mode:
-  - mode=0: same
-  - mode=1: `CAI.PhaseIs(data, PHASE.COVER)`
-
-### react/flinch.lua (legacy mode=0 only — no dual-mode needed, dead when mode=1)
-- Keep as-is. `BR.Flinch` only runs in mode=0 (guarded in think.lua).
-- Reflex handlers (`react/reflexes/*.lua`) have NO state checks — they bias movement unconditionally.
-
-### think.lua (already rewritten for dual-mode)
-- OODA path uses `PhaseIs` checks; legacy path keeps `data.state` checks.
-
-### sv_debug.lua + cl_debug.lua (Phase 5)
-- Send both `data.phase` and `data.phaseIntent` over net when mode=1
-- Keep `CAI.STATE` net send for mode=0
-- Add `PHASE_COLORS` alongside `STATE_COLORS`
-- Add `T.Phases` alongside `T.States`
-
----
-
-## Dual-Mode Convar (for safe migration)
-
-Add `cai_ooda_mode` convar (default 0):
-- **0**: Legacy mode — keep `CAI.STATE`, `BR.Exec[0..11]`, old `BR.Decide`, `BR.Flinch`
-- **1**: OODA mode — use `CAI.PHASE`, `BR.ExecPhase[phase]`, new OODA cycle, `BR.Reflex` handlers
-
-Both modes coexist in the codebase during development. `think.lua` routes at runtime:
-- mode=0: `BR.Decide` → `BR.SetState` → `BR.Exec[state]` + `BR.Flinch`
-- mode=1: `BR.Reflex` → `BR.OODA` → `BR.SetPhase` → `BR.ExecPhase[phase]` + reflex bias
-
-Both `decide.lua` (OODA COAs) and `decide_legacy.lua` (legacy COAs + BR.Decide) are always loaded — the runtime path uses only the tables relevant to the current mode. Same for `react/`: both `flinch.lua` and `reflexes/*.lua` are always loaded; think.lua calls the correct function.
-
-This allows:
-1. Incremental development (test Phase 1 while Phase 2 is being written)
-2. Instant rollback by toggling the convar
-3. A/B comparison of NPC behavior
-
-When migration is complete and stable, the legacy path and convar are removed.
-
----
-
-## File Structure Changes
-
-### New files
-```
-server/brain_func/ooda.lua                -- OODA cycle
-server/brain_func/decide_legacy.lua       -- legacy COA loader + BR.Decide (mode=0)
-server/brain_func/react/shared.lua        -- BR.IsCommitted + BR.UnderFire (both modes)
-server/brain_func/react/reflexes/grenade_dodge.lua
-server/brain_func/react/reflexes/melee_dodge.lua
-server/brain_func/react/reflexes/suppression_jink.lua
-server/brain_func/react/flinch.lua        -- legacy BR.Flinch (mode=0)
-server/brain_func/decide/morale_break.lua
-server/brain_func/decide/panic.lua
-server/brain_func/decide/flank_protect.lua (rewritten)
-server/brain_func/decide/melee_threat.lua
-server/brain_func/decide/room_clear_coa.lua
-server/brain_func/decide/pinned.lua
-server/brain_func/decide/engage_target.lua
-server/brain_func/decide/lost_target_coa.lua
-server/brain_func/decide/suppress_order.lua
-server/brain_func/decide/flank_order.lua
-server/brain_func/decide/bound_order.lua
-server/brain_func/decide/separated.lua
-server/brain_func/decide/squad_aware.lua (rewritten)
-server/brain_func/decide/pre_contact.lua
-server/brain_func/exec/pre_contact.lua
-server/brain_func/exec/assess.lua
-server/brain_func/exec/maneuver.lua
-server/brain_func/exec/withdraw.lua
-server/brain_func/exec/post_contact.lua
-```
-
-### Moved to `decide/legacy/`
-```
-decide/legacy/emergency_relocate.lua
-decide/legacy/grenade_scatter.lua
-decide/legacy/melee_swarm.lua
-decide/legacy/melee_chase.lua
-decide/legacy/morale_panic.lua
-decide/legacy/morale_broken.lua
-decide/legacy/flank.lua
-decide/legacy/squad_flank_order.lua
-decide/legacy/squad_suppress_order.lua
-decide/legacy/squad_bound_order.lua
-decide/legacy/separated_from_squad.lua
-decide/legacy/squad_aware.lua (old)
-decide/legacy/cover_hold.lua
-decide/legacy/engage.lua
-decide/legacy/lost_target.lua
-decide/legacy/room_clear.lua
-decide/legacy/patrol.lua
-```
-
-### Moved to `exec/legacy/`
-```
-exec/legacy/idle.lua
-exec/legacy/patrol.lua
-exec/legacy/suppress.lua
-exec/legacy/search.lua
-exec/legacy/investigate.lua
-exec/legacy/regroup.lua
-exec/legacy/room_clear.lua
-exec/legacy/bounded.lua
-exec/legacy/retreat.lua
-exec/legacy/flank.lua
-```
-
-### Modified files
-```
-sv_brain.lua            — add decide_legacy.lua include
-sv_manager.lua          — update data init (remove state/stateSince/prevState)
-shared/sh_config.lua    — add CAI.PHASE, CAI.PHASE_NAMES, Plan config
-shared/sh_text.lua      — replace T.States with T.Phases
-shared/sh_net.lua       — update state net transfers to phase+intent
-client/cl_debug.lua     — read phase+intent, PHASE_COLORS
-server/sv_target.lua    — update SUPPRESS check
-server/sv_morale.lua    — update IDLE/PATROL checks
-server/sv_squad.lua     — update all state checks + SetState → planPending
-server/sv_navigation.lua — add reflex bias to MoveTo
-server/sv_debug.lua     — send phase+intent instead of state
-server/sv_sound.lua     — update IDLE/PATROL checks + SetState → planPending
-server/sv_darkness.lua  — update IDLE check
-server/sv_cover.lua     — update SetState → planPending
-server/brain_func/state.lua — rewrite to SetPhase
-server/brain_func/think.lua — rewrite
-server/brain_func/react.lua — rewrite to modular loader (react/ subfiles)
-server/brain_func/perceive.lua — update COVER check
-server/brain_func/exec/engage.lua — update CAI.STATE refs to PHASE (0 SetState calls, copies verbatim)
-server/brain_func/exec/cover.lua — update CAI.STATE refs + SetState → planPending (2 calls)
-server/brain_func/exec.lua — define BR.ExecPhase, load new exec files
-server/brain_func/decide.lua — rewrite to OODA COA registration
+    MinSpacing = 150,              -- minimum distance between squad members in combat
+    PatrolFormation = true,        -- enable formation-keeping during patrol
+    FormationBreakRadius = 600,    -- max distance from nearest squadmate before considered isolated; triggers regroup
 ```
 
 ---
 
-## Migration Strategy
+## Migration Steps
 
-### Phase 0: Pre-Migration Setup
-1. Add `cai_ooda_mode` convar (0=legacy, 1=OODA)
-2. Create `CAI.PHASE` enum alongside `CAI.STATE` in `sh_config.lua`
-3. Create `CAI.PhaseIs()` helper function
+### Step 1: Create squad_func/ module files
+1. `squad_func/init.lua` — namespace + loader
+2. `squad_func/plan.lua` — migrate SQ.Plan body
+3. `squad_func/patrol.lua` — new squad patrol planner
+4. `squad_func/formation.lua` — migrate SF.FormationSlot + UpdateFormation, add SpacingCheck
+5. `squad_func/spatial.lua` — shared enemy map (Phase 2, skip for now)
 
-### Phase 1: Foundation (OODA path)
-4. Add new data fields to `MG.Register` in `sv_manager.lua` (only used when mode=1)
-5. Write `BR.SetPhase` in `state.lua`
-6. Write `react/` module: `react.lua` loader, `react/shared.lua`, `react/reflexes/*.lua` handlers, `react/flinch.lua`
-7. Write `ooda.lua` with OODA cycle
-8. Write new `think.lua` with reflex → OODA → exec flow
-9. Update `sv_brain.lua` includes + convar routing
+### Step 2: Modify ooda.lua + decide.lua
+6. Add SquadOrder channel to decide.lua COA tables
+7. Add SquadOrder iteration loop to ooda.lua
+8. Enrich ctx table with holdUnknown, dangerAvoid, squadCovering
 
-### Phase 2: Exec Handlers
-10. Write/rewrite 7 phase-based exec files (5 new, 2 updated in place)
-11. Register `BR.ExecPhase[phase]` in `exec.lua` (alongside `BR.Exec`)
-12. Move old state-based exec files to `exec/legacy/` — preserves `cai_ooda_mode=0` through Phases 2-3
+### Step 3: Rewrite 4 squad COAs
+9. suppres_order.lua → SquadOrder, remove visible guard
+10. flank_order.lua → SquadOrder, remove visible guard
+11. bound_order.lua → SquadOrder, remove visible guard
+12. separated.lua → SquadOrder, remove visible guard
 
-### Phase 3: COA Modules
-13. Write new COA modules (14 files)
-14. Move old COA modules to `decide/legacy/`
+### Step 4: Update exec handlers
+13. exec/pre_contact.lua — add squad patrol formation branch
+14. exec/engage.lua — add clustering check + formation cohesion abort
+15. exec/maneuver.lua — add formation cohesion check during bound (abort if isolated)
+16. exec/withdraw.lua — replace `awayFromEnemies()` with `retreatDirection()` (blends away-from-enemies + toward-allies via SquadCenterOfMass)
+17. exec/cover.lua — add spacing rejection + mutual support range preference
 
-### Phase 4: Subsystem Updates (Dual-Mode — each check wraps `if cai_ooda_mode then PhaseIs else data.state ==`)
-15. Update `sv_squad.lua` — all state checks + SetState → planPending/mode-guard
-16. Update `sv_target.lua` — SUPPRESS check
-17. Update `sv_morale.lua` — IDLE/PATROL checks + SetState → planPending/mode-guard
-18. Update `sv_sound.lua` — IDLE/PATROL checks + SetState → planPending/mode-guard
-19. Update `sv_darkness.lua` — IDLE check
-20. Update `sv_cover.lua` — SetState → planPending/mode-guard
-21. Update `perceive.lua` — COVER check
-22. Update `sv_navigation.lua` — add reflex bias to MoveTo
+### Step 5: Clean up sv_squad.lua
+18. Remove `SQ.Plan` body (lines 274-460), update timer to call `CAI.SquadFunc.Plan(squad)`, update/remove `CAI.Prof.WrapFn(SQ, "Plan")`
+19. Remove `SQ.FormationSlot` (lines 233-242) and `SQ.UpdateFormation` (lines 244-272) — migrated to squad_func/formation.lua
+20. Keep `SQ.Create`, `SQ.AddMember`, `SQ.RemoveMember`, `SQ.Place`, `SQ.AssignRoles`, `SQ.Broadcast`, `SQ.OnComm`, `SQ.AnyoneEngaging`, `SQ.Suppressing`
 
-### Phase 5: Debug + Network (Dual-Mode — send phase+intent for mode=1, state for mode=0)
-23. Update `sv_debug.lua` — send phase+intent when mode=1
-24. Update `cl_debug.lua` — PHASE_COLORS, phase+intent display when mode=1
-25. Update `sh_text.lua` — T.Phases labels
-26. Update `sh_net.lua` — wire format for phase+intent
+### Step 6: Add squadIndex to plan tick
+21. In `CAI.SquadFunc.Plan`, after `SQ.AssignRoles(squad)`, iterate members and set `data.squadIndex = i` so formation slot lookup is O(1) without re-scanning `squad.members`
 
-### Phase 6: Cleanup
-27. Remove `exec/legacy/` and `decide/legacy/` directories (old exec + old COA)
-28. Remove `CAI.STATE` enum and `CAI.STATE_NAMES` from `sh_config.lua`
-29. Remove `BR.Exec` table and old `exec.lua` loader
-30. Remove `cai_ooda_mode` convar and legacy routing
-31. Syntax check with `luac5.1 -p` on every changed file
-32. Manual smoke test: spawn NPCs with various roles, verify behavior visually
+### Step 7: Syntax check + smoke test
+22. `luac5.1 -p` on all changed files
+23. Manual smoke test: spawn 4 NPCs of same faction, verify they patrol in formation, respond to squad orders, maintain spacing, bounders abort and regroup if isolated, retreating NPCs move toward squad center

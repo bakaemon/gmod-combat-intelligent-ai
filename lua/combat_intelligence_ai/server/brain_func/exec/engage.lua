@@ -515,5 +515,23 @@ BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
             npc:SetSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
         end
     end
+    if data.squad and #data.squad.members > 1 then
+        local minDist = CAI.Config.SquadTactics.MinSpacing or 150
+        for _, m in ipairs(data.squad.members) do
+            if IsValid(m) and m ~= npc then
+                local dSq = npc:GetPos():DistToSqr(m:GetPos())
+                if dSq < minDist * minDist then
+                    local away = (npc:GetPos() - m:GetPos()):GetNormalized()
+                    local dest = CAI.Nav.SafeOffset(npc:GetPos(), away, minDist)
+                    if dest then CAI.Nav.MoveTo(data, dest, "run") end
+                    break
+                end
+            end
+        end
+        if not CAI.SquadFunc.FormationCheck(data) then
+            data.planPending = "formation_broken"
+            return
+        end
+    end
     CAI.FriendlyFire.Update(data)
 end

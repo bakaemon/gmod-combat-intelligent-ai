@@ -146,6 +146,12 @@ BR.ExecPhase[CAI.PHASE.MANEUVER] = function(data)
     end
 
     if data.phaseIntent == "bound" then
+        if data.squad and not CAI.SquadFunc.FormationCheck(data) then
+            data.boundTarget = nil
+            data.boundArrived = nil
+            data.planPending = "bound_too_far"
+            return
+        end
         if not data.boundTarget then
             data.planPending = "no_bound_target"
             return

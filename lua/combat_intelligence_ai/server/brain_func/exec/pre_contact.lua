@@ -8,6 +8,23 @@ BR.ExecPhase[CAI.PHASE.PRE_CONTACT] = function(data)
             if math.random() < 0.03 then CAI.Voice.Speak(data, "idle") end
             return
         end
+        local squad = data.squad
+        if squad and CAI.CVBool("cai_formations") and squad.patrolPos and #squad.members > 1 then
+            if npc == squad.leader then
+                if data.moveTarget and not CAI.Nav.Arrived(data, 80) then return end
+                CAI.Nav.MoveTo(data, squad.patrolPos, "walk")
+            else
+                local idx = CAI.SquadFunc.SquadIndex(squad, npc)
+                local slot = idx and CAI.SquadFunc.FormationSlot(squad, idx)
+                if slot then
+                    if data.moveTarget and not CAI.Nav.Arrived(data, 80) then return end
+                    CAI.Nav.MoveTo(data, slot, "walk")
+                end
+            end
+            CAI.Nav.CheckStuck(data)
+            if math.random() < 0.1 then CAI.Voice.Speak(data, "idle") end
+            return
+        end
         if data.moveTarget then
             if CAI.Nav.Arrived(data, 80) then
             elseif npc.IsCurrentSchedule and npc:IsCurrentSchedule(SCHED_IDLE_STAND) then

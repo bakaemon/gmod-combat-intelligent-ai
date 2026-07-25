@@ -40,4 +40,6 @@ include(BRAIN .. "react.lua")           -- BR.IsCommitted, BR.UnderFire, BR.Refl
 include(BRAIN .. "ooda.lua")            -- BR.OODA (OODA cycle)
 include(BRAIN .. "think.lua")
 
+include("combat_intelligence_ai/server/squad_func/init.lua")
+
 CAI.Prof.WrapFn(BR, "Prefire", "brain_prefire")

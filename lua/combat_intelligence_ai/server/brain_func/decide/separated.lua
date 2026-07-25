@@ -1,11 +1,12 @@
 local BR = CAI.Brain
 
-table.insert(BR.COA.Target, function(ctx)
-    if not ctx.visible then return end
-    if ctx.data.squad and IsValid(ctx.data.squad.leader) and ctx.data.squad.leader ~= ctx.npc
-       and ctx.data.role ~= CAI.ROLE.FLANKER
-       and ctx.npc:GetPos():DistToSqr(ctx.data.squad.leader:GetPos()) > 700 * 700
-       and ctx.npc:GetPos():Distance(ctx.enemy:GetPos()) > CAI.WeaponIntel.OwnRange(ctx.npc) then
-        return CAI.PHASE.WITHDRAW, "regroup", 4, "separated_from_squad"
-    end
+table.insert(BR.COA.SquadOrder, function(ctx)
+    local data, npc = ctx.data, ctx.npc
+    if not data.squad or not IsValid(data.squad.leader) then return end
+    if data.squad.leader == npc or data.role == CAI.ROLE.FLANKER then return end
+    local radius = CAI.Config.SquadTactics.FormationBreakRadius or 600
+    if npc:GetPos():DistToSqr(data.squad.leader:GetPos()) <= radius * radius then return end
+    local enemyRange = ctx.enemy and npc:GetPos():Distance(ctx.enemy:GetPos()) or math.huge
+    if enemyRange <= CAI.WeaponIntel.OwnRange(npc) then return end
+    return CAI.PHASE.WITHDRAW, "regroup", 4, "separated_from_squad"
 end)

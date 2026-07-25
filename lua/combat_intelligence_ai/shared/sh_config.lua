@@ -590,6 +590,9 @@ C.SquadTactics = {
     MoveShootFraction = 0.5,
     BattleAwarenessRadius = 1200,
     BattleAwarenessDuration = 8,
+    MinSpacing = 150,
+    PatrolFormation = true,
+    FormationBreakRadius = 600,
 }
 
 C.Push = {

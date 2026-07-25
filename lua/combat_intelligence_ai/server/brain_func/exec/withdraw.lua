@@ -1,6 +1,6 @@
 local BR = CAI.Brain
 
-local function awayFromEnemies(data, npc)
+local function retreatDirection(data, npc)
     local push = Vector()
     for ent, rec in pairs(data.memory.enemies) do
         if IsValid(ent) and CAI.Util.Alive(ent) and rec.pos then
@@ -11,7 +11,28 @@ local function awayFromEnemies(data, npc)
         end
     end
     push.z = 0
-    return push:LengthSqr() > 1 and push:GetNormalized() or nil
+    local pull = Vector()
+    local center = data.squad and CAI.SquadFunc.SquadCenterOfMass(data.squad, npc, 2000)
+    if center then
+        pull = center - npc:GetPos()
+        pull.z = 0
+    end
+    local combined
+    if push:LengthSqr() > 1 then
+        push:Normalize()
+        if pull:LengthSqr() > 1 then
+            pull:Normalize()
+            combined = push * 0.7 + pull * 0.3
+        else
+            combined = push
+        end
+    elseif pull:LengthSqr() > 1 then
+        combined = pull
+    else
+        return nil
+    end
+    combined.z = 0
+    return combined:GetNormalized()
 end
 
 local function nearestEnemy(data, npc)
@@ -77,10 +98,10 @@ BR.ExecPhase[CAI.PHASE.WITHDRAW] = function(data)
 
             if now - (data.escapeMoveAt or 0) > 1.0 then
                 data.escapeMoveAt = now
-                local away = ref and (npc:GetPos() - ref) or awayFromEnemies(data, npc)
+                local away = ref and (npc:GetPos() - ref) or retreatDirection(data, npc)
                 away = away or Vector(1, 0, 0)
                 away.z = 0
-                if away:LengthSqr() < 1 then away = awayFromEnemies(data, npc) or Vector(1, 0, 0) end
+                if away:LengthSqr() < 1 then away = retreatDirection(data, npc) or Vector(1, 0, 0) end
                 away:Normalize()
                 local yaw = away:Angle().y
                 local dest
@@ -120,7 +141,7 @@ BR.ExecPhase[CAI.PHASE.WITHDRAW] = function(data)
                     dest = spot
                 end
                 if not dest then
-                    local away = awayFromEnemies(data, npc) or (npc:GetPos() - threat)
+                    local away = retreatDirection(data, npc) or (npc:GetPos() - threat)
                     away.z = 0
                     if away:LengthSqr() < 1 then away = Vector(1, 0, 0) end
                     away:Normalize()
@@ -133,7 +154,7 @@ BR.ExecPhase[CAI.PHASE.WITHDRAW] = function(data)
                 end
             end
             if not dest then
-                local away = awayFromEnemies(data, npc) or Vector(1, 0, 0)
+                local away = retreatDirection(data, npc) or Vector(1, 0, 0)
                 away.z = 0
                 if away:LengthSqr() < 1 then away = Vector(1, 0, 0) end
                 away:Normalize()
@@ -163,7 +184,7 @@ BR.ExecPhase[CAI.PHASE.WITHDRAW] = function(data)
                     else fallback = fallback or spot end
                 end
                 if not unseen then
-                    local away = awayFromEnemies(data, npc) or (npc:GetPos() - threat)
+                    local away = retreatDirection(data, npc) or (npc:GetPos() - threat)
                     away.z = 0
                     if away:LengthSqr() < 1 then away = Vector(1, 0, 0) end
                     away:Normalize()

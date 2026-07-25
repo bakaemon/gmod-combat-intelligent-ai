@@ -22,12 +22,25 @@ function BR.OODA(data)
         enemy = enemy,
         rec = rec,
         visible = visible,
+        holdUnknown = CAI.CVBool("cai_hold_unknown"),
+        dangerAvoid = CAI.CVBool("cai_danger_avoid"),
+        squadCovering = data.squad and function()
+            return CAI.Squad.AnyoneEngaging(data.squad, npc)
+                or CAI.Squad.Suppressing(data.squad, npc)
+        end or function() return false end,
     }
 
     local phase, intent, duration, reason
-    for _, coa in ipairs(BR.COA.OODA.PreTarget) do
+
+    for _, coa in ipairs(BR.COA.OODA.SquadOrder) do
         phase, intent, duration, reason = coa(ctx)
         if phase then break end
+    end
+    if not phase then
+        for _, coa in ipairs(BR.COA.OODA.PreTarget) do
+            phase, intent, duration, reason = coa(ctx)
+            if phase then break end
+        end
     end
     if not phase then
         for _, coa in ipairs(BR.COA.OODA.Target) do
