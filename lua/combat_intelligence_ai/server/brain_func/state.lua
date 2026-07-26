@@ -27,6 +27,10 @@ function BR.SetPhase(data, newPhase, intent, reason, overrideCommitment)
         end
     end
 
+    if not overrideCommitment and BR.IsCommitted(data) then
+        return
+    end
+
     local oldPhaseSince = data.phaseSince or CurTime()
     data.prevPhase = data.phase
 

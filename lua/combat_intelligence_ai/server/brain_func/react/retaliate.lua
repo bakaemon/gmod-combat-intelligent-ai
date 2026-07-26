@@ -3,6 +3,7 @@ local BR = CAI.Brain
 BR.Retaliate = function(data)
     local npc = data.ent
     if not data.retaliateUntil then return end
+    if data.phase == CAI.PHASE.WITHDRAW and (data.phaseIntent == "flee" or data.phaseIntent == "tactical") then return end
     if CurTime() >= data.retaliateUntil then
         data.retaliateUntil = nil
         data.retaliateTarget = nil

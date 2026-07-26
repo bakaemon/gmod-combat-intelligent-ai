@@ -468,6 +468,7 @@ BR.ExecPhase[CAI.PHASE.ENGAGE] = function(data)
         local firing = false
         if npc.IsCurrentSchedule then
             firing = npc:IsCurrentSchedule(SCHED_RANGE_ATTACK1)
+                or npc:IsCurrentSchedule(SCHED_RANGE_ATTACK2)
                 or npc:IsCurrentSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
         end
         if data.squad and data.squadPlan == "hold" and data.staggerOffset and data.squad._staggerPhase then
