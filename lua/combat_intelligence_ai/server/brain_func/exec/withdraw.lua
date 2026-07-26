@@ -69,6 +69,7 @@ BR.ExecPhase[CAI.PHASE.WITHDRAW] = function(data)
     local nearPos, curD = nearestEnemy(data, npc)
 
     if data.phaseIntent == "flee" or data.phaseIntent == "tactical" then
+        if data.reflex then data.reflex.bias = nil end
         if data.lastDecision == "escape_encirclement" then
             local ecfg = CAI.Config.Escape
             local now = CurTime()
@@ -111,7 +112,7 @@ BR.ExecPhase[CAI.PHASE.WITHDRAW] = function(data)
                     local p = CAI.Nav.SafeOffset(npc:GetPos(), dir, ecfg.Step)
                     if p and safeRetreat(data, p, nearPos, curD) then dest = p break end
                 end
-if dest and IsValid(navmesh.GetNearestNavArea(dest)) then CAI.Nav.MoveTo(data, dest, "run") end
+                if dest and IsValid(navmesh.GetNearestNavArea(dest)) and not BR.IsCommitted(data) then CAI.Nav.MoveTo(data, dest, "run") end
                 if not data.saidRetreat then
                     data.saidRetreat = true
                     CAI.Voice.Speak(data, "retreat")
@@ -126,7 +127,7 @@ if dest and IsValid(navmesh.GetNearestNavArea(dest)) then CAI.Nav.MoveTo(data, d
             if away:LengthSqr() < 1 then away = Vector(1, 0, 0) end
             away:Normalize()
             local dest = CAI.Nav.SafeOffset(npc:GetPos(), away, 280)
-            if dest and IsValid(navmesh.GetNearestNavArea(dest)) then CAI.Nav.MoveTo(data, dest, "run") end
+            if dest and IsValid(navmesh.GetNearestNavArea(dest)) and not BR.IsCommitted(data) then CAI.Nav.MoveTo(data, dest, "run") end
             return
         end
 
@@ -161,7 +162,7 @@ if dest and IsValid(navmesh.GetNearestNavArea(dest)) then CAI.Nav.MoveTo(data, d
                 away:Normalize()
                 dest = CAI.Nav.SafeOffset(npc:GetPos(), away, 700)
             end
-            if dest and IsValid(navmesh.GetNearestNavArea(dest)) then CAI.Nav.MoveTo(data, dest, "run") end
+            if dest and IsValid(navmesh.GetNearestNavArea(dest)) and not BR.IsCommitted(data) then CAI.Nav.MoveTo(data, dest, "run") end
             if not data.saidRetreat then
                 data.saidRetreat = true
                 CAI.Voice.Speak(data, "panic")
@@ -190,13 +191,24 @@ if dest and IsValid(navmesh.GetNearestNavArea(dest)) then CAI.Nav.MoveTo(data, d
                     if away:LengthSqr() < 1 then away = Vector(1, 0, 0) end
                     away:Normalize()
                     local yaw = away:Angle().y
+                    local heatCfg = CAI.Config.Heatmap
+                    local bestUnseenScore, bestFallbackScore = -math.huge, -math.huge
                     for _, off in ipairs({ 0, 45, -45, 90, -90 }) do
                         local dir = Angle(0, yaw + off, 0):Forward()
                         local p = CAI.Nav.RandomPointNear(npc:GetPos() + dir * 800, 400)
                         if not p then p = CAI.Nav.SafeOffset(npc:GetPos(), dir, 600) end
                         if p and safeRetreat(data, p, nearPos, curD) then
-                            if not exposedToEnemies(data, p) then unseen = unseen or p break end
-                            fallback = fallback or p
+                            local temp = CAI.SpatialMap.QueryTemp(data.squad, p)
+                            local coldness = heatCfg.Baseline - temp
+                            if not exposedToEnemies(data, p) then
+                                if coldness >= bestUnseenScore then
+                                    bestUnseenScore = coldness
+                                    unseen = p
+                                end
+                            elseif coldness >= bestFallbackScore then
+                                bestFallbackScore = coldness
+                                fallback = p
+                            end
                         end
                     end
                 end
@@ -204,7 +216,9 @@ if dest and IsValid(navmesh.GetNearestNavArea(dest)) then CAI.Nav.MoveTo(data, d
                 if dest then
                     data.retreatDest = dest
                     data.retreatMoveAt = CurTime()
-                    CAI.Nav.MoveTo(data, dest, "run")
+                    if not BR.IsCommitted(data) then
+                        CAI.Nav.MoveTo(data, dest, "run")
+                    end
                 else
                     data.retreatDest = nil
                 end
@@ -218,7 +232,9 @@ if dest and IsValid(navmesh.GetNearestNavArea(dest)) then CAI.Nav.MoveTo(data, d
         -- Re-issue movement to existing retreat destination every 1s
         if data.retreatDest and CurTime() - (data.retreatMoveAt or 0) > 1 then
             data.retreatMoveAt = CurTime()
-            CAI.Nav.MoveTo(data, data.retreatDest, "run")
+            if not BR.IsCommitted(data) then
+                CAI.Nav.MoveTo(data, data.retreatDest, "run")
+            end
         elseif nearPos then
             -- Fallback: run away from nearest enemy
             local away = (npc:GetPos() - nearPos):GetNormalized() * 600
@@ -226,7 +242,9 @@ if dest and IsValid(navmesh.GetNearestNavArea(dest)) then CAI.Nav.MoveTo(data, d
             if dest and IsValid(navmesh.GetNearestNavArea(dest)) then
                 data.retreatDest = dest
                 data.retreatMoveAt = CurTime()
-                CAI.Nav.MoveTo(data, dest, "run")
+                if not BR.IsCommitted(data) then
+                    CAI.Nav.MoveTo(data, dest, "run")
+                end
             end
         end
         return
