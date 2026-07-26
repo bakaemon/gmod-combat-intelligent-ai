@@ -48,29 +48,11 @@ local function HasExternalFlashlights()
 end
 
 local function LightOn(npc, data)
-    if IsValid(data.flashlight) then return end
-    local l = ents.Create("light_dynamic")
-    if not IsValid(l) then return end
-    l:SetPos(npc:GetPos() + Vector(0, 0, 58))
-    l:SetKeyValue("brightness", "1")
-    l:SetKeyValue("distance", "380")
-    l:SetKeyValue("_light", "255 245 215 255")
-    l:SetKeyValue("style", "0")
-    l:Spawn()
-    l:SetParent(npc)
-    l:SetLocalPos(Vector(14, 0, 58))
-    l:Fire("TurnOn")
-    data.flashlight = l
-    data.lightToggleAt = CurTime()
-    npc:CallOnRemove("CAI_Flashlight_" .. npc:EntIndex(), function()
-        if IsValid(l) then l:Remove() end
-    end)
+    CAI.WeaponLight.On(npc, data)
 end
 
 local function LightOff(data)
-    if IsValid(data.flashlight) then data.flashlight:Remove() end
-    data.flashlight = nil
-    data.lightToggleAt = CurTime()
+    CAI.WeaponLight.Off(data)
 end
 CAI.NPCLightOff = LightOff
 
@@ -120,8 +102,10 @@ timer.Create("CAI_NPCFlashlights", 0.5, 0, CAI.Prof.Wrap("darkness_flashlights",
     table.sort(cands, function(a, b) return a.d < b.d end)
     for i, c in ipairs(cands) do
         if i <= MAX_LIGHTS then
-            if not IsValid(c.data.flashlight) and CanToggle(c.data) then
-                LightOn(c.data.ent, c.data)
+            if not IsValid(c.data.flashlight) then
+                if CanToggle(c.data) then LightOn(c.data.ent, c.data) end
+            else
+                CAI.WeaponLight.Refresh(c.data.ent, c.data)
             end
         elseif IsValid(c.data.flashlight) and CanToggle(c.data) then
             LightOff(c.data)
