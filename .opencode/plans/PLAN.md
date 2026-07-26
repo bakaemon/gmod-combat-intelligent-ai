@@ -1,142 +1,202 @@
-# Plan: Unified Temperature Heatmap + Patrol Integration + CQB Clearing
+# Plan: Cover Phase Fixes
 
-## Design
-Replace the separate `{ danger, safety }` heatmap with a single unified `temp` variable per grid cell. Temperature is the single source of truth for both danger avoidance and patrol targeting. The heatmap represents **information state**:
+## Problems
+1. **Plan invalidation race** (`sv_cover.lua:240-241`) — When cover is compromised, `UpdateCoverStatus` finds new cover and immediately sets `plan.expiresAt = CurTime()`, causing the OODA to change phase before the NPC moves to the new position.
+2. **`lost_target_coa.lua` returns COVER blindly** — 4 return paths without checking `FindBest`. NPC stands vulnerable while the exec handler searches.
+3. **No squad-level cover cache** — `FindBest` runs the expensive `GatherSpots` + `ScoreSpot` pipeline every call (~1.5ms). Per-NPC, per-OODA-tick. No sharing of results between squad members.
 
-- `temp = 25` (baseline) = unknown, uncleared
-- `temp < 25` (cold) = visually cleared, safe
-- `temp > 25` (hot) = danger, active threat
+## Expected Fixes
+1. NPCs move to newly-found cover after compromise instead of being yanked into a new phase
+2. `lost_target_coa.lua` only returns COVER when cover is actually available
+3. Squad-level cover cache with three tiers — fast grid query, proactive refresh, reactive fallback. All tiers populate the cache.
 
-Patrols cool cells by walking (aura) and looking (LOS cone). The planner chases cells at or above baseline (uncleared), not cold ones.
+## Fix 1: Plan invalidation race (`sv_cover.lua:240-241`)
 
-## Unified heatmap data structure
+**Root cause**: `data.planPending = "cover_blown"` + `data.plan.expiresAt = CurTime()` at lines 240-241, immediately after finding new cover at line 237. The phase replans before the NPC moves to the new cover.
 
+**Fix**: Remove the `planPending` and `plan.expiresAt` lines. Let the NPC move to the newly-found cover and only force a replan if the search itself fails.
+
+Current at lines 237-241:
 ```lua
--- Before:  { danger = n, safety = n, updatedAt = t, lastDangerAt = t }
--- After:   { temp = 25, updatedAt = t, lastDangerAt = t }
+data.cover = { pos = newPos, since = CurTime() }
+                data.forceRecover = nil
+                CAI.Nav.MoveTo(data, newPos, "run")
+data.planPending = "cover_blown"
+data.plan.expiresAt = CurTime()
 ```
 
-`temp` starts at 25 (neutral) for every new cell. `lastDangerAt` is preserved for future corner-sweep queries.
-
-## Config (`sh_config.lua`)
-
+Fixed — only remove `planPending` and `plan.expiresAt` (lines 240-241), keep `forceRecover` and `MoveTo`:
 ```lua
-C.Heatmap = {
-    Baseline = 25,              -- neutral starting point
-    HeatIncrement = 10,         -- per danger event (cover compromised, jink fire)
-    PatrolDecrement = 5,        -- per patrol visit or safe occupation
-    HeatDecayRate = 0.25,       -- temp > 25 drifts toward 25 at this rate
-    SafetyDecayRate = 0.4,      -- temp < 25 drifts toward 25 at this rate (faster = paranoia)
-    RadiateRadius = 200,        -- how far temp change radiates from event origin
-    DangerThreshold = 35,       -- temp above this → danger; jink holds below this
-    AuraRadiateRadius = 100,    -- radius of the cool aura around the NPC during patrol
-    AuraCoolRate = 0.5,         -- temp reduction per patrol tick for aura
-    ConeRange = 500,            -- range of the LOS cooling cone
-    ConeFOV = 90,               -- field of view of the cone (degrees)
-    ConeRays = 5,               -- number of rays cast in the cone
-    ConeCoolRate = 1,           -- temp reduction per patrol tick for each cone ray
-    PatrolRadius = 1200,        -- range for patrol target search
-}
+data.cover = { pos = newPos, since = CurTime() }
+                data.forceRecover = nil
+                CAI.Nav.MoveTo(data, newPos, "run")
 ```
 
-## Temperature events
+The `planPending` on line 244 (after 4 failed FindBest calls) already handles the true failure case. The compromise case just needs to set the new cover and let the search path in the exec handler handle re-evaluation naturally — the NPC stays in COVER phase, the next tick sees `data.cover` is set, and continues the move-to-cover flow.
 
-| Event | Delta | Source |
-|-------|-------|--------|
-| Cover compromised | +HeatIncrement | `Battlefield.MarkCover(pos, false)` |
-| Jink reflex | +HeatIncrement | `suppression_jink.lua` after fleeing |
-| Patrol aura (per tick) | -AuraCoolRate | `pre_contact.lua` during patrol movement — `RecordTemp(squad, npcPos, -AuraCoolRate, AuraRadiateRadius)` |
-| Patrol LOS cone (per tick) | -ConeCoolRate | `pre_contact.lua` during patrol movement — 5 rays across 90° FOV, `RecordTemp` at each ray endpoint |
-| Safe occupation (6s) | -PatrolDecrement | `Battlefield.MarkCover(pos, true)` |
+## Fix 2: `lost_target_coa.lua` — gate COVER returns with FindBest
 
-All events call a single `SM.RecordTemp(squad, pos, delta, radius)` function. When a heatmap cell is first created, `temp` starts at `C.Heatmap.Baseline + delta` (clamped 0-50). Subsequent calls add `delta` to the existing `temp` (clamped 0-50).
+**Root cause**: Lines 31, 35, 51, 56 return COVER without checking if cover exists. The exec handler searches on the first frame, but the NPC stands in the open while waiting.
 
-## Degradation
-
-During `SM.Scan` (1s spatial map timer), capture the previous scan timestamp before it's overwritten, then iterate heatmap cells and apply directional decay:
+**Fix**: Before each COVER return, call `FindBest` and only return COVER if a position is found. With the new tiered cache (Fix 3), `FindBest` is now cheap for most calls — it queries the cache first. Extract the search into a `hasCover` helper and check it before each COVER return.
 
 ```lua
-local elapsed = CurTime() - sm.lastScan  -- capture BEFORE sm.lastScan is updated
-for key, h in pairs(sm.heatmap) do
-    if h.temp > C.Heatmap.Baseline then
-        h.temp = math.max(C.Heatmap.Baseline, h.temp - C.Heatmap.HeatDecayRate * elapsed)
-    elseif h.temp < C.Heatmap.Baseline then
-        h.temp = math.min(C.Heatmap.Baseline, h.temp + C.Heatmap.SafetyDecayRate * elapsed)
+local function hasCover(data)
+    if data._coverCheckAt and CurTime() - data._coverCheckAt < 0.5 then
+        return data._coverAvailable
     end
-    if h.temp >= C.Heatmap.Baseline - 2 and h.temp <= C.Heatmap.Baseline + 2 then
-        sm.heatmap[key] = nil  -- prune near-neutral cells
+    local enemy, rec = CAI.Memory.FreshestEnemy(data)
+    data._coverCheckAt = CurTime()
+    data._coverAvailable = CAI.Cover.FindBest(data, enemy, rec and rec.pos) ~= nil
+    return data._coverAvailable
+end
+```
+
+Then gate each COVER return:
+```lua
+if hasCover(data) then return CAI.PHASE.COVER, "hold", 2, "await_reacquire" end
+```
+
+If no cover found, the COA doesn't return — the NPC falls through to investigate/search/cover in the downstream branches.
+
+## Fix 3: Squad-level cover cache (three tiers)
+
+**Root cause**: `FindBest` runs the expensive `GatherSpots` → `ScoreSpot` pipeline every call. The `spatialMap.cover` grid already exists (populated by `SM.ScanCover`) but `FindBest` ignores it. `QueryNearby` reads the grid but is called by nothing. Each NPC pays the full cost independently.
+
+**Fix**: Replace the `FindBest` implementation with a three-tier system. All tiers store results in `spatialMap.cover`, so the first expensive search for an area populates the cache for all squad members.
+
+### Tier 1: Fast grid query (replaces the front of FindBest)
+
+`FindBest` starts by calling `QueryNearby` with the NPC's position (not the enemy's):
+
+```lua
+function CV.FindBest(data, enemy, enemyPos)
+    local npc = data.ent
+    local npcPos = IsValid(npc) and npc:GetPos()
+    -- Tier 1: fast cache query near the NPC
+    local cached = npcPos and CV.QueryNearby(data, npcPos, C.Cover.SearchRadius)
+    if cached then return cached end
+
+    -- Tier 2/3: expensive search (see below)
+    ...
+end
+```
+
+`QueryNearby` already:
+- Queries `spatialMap.cover` cells within `radius` of `origin`
+- Filters by `temp < DangerThreshold` (heatmap)
+- Returns nearest valid position or nil
+
+This is ~0.05ms — 30x faster than the full pipeline.
+
+### Tier 2: Proactive cache refresh (squad-level timer, 2.0s interval)
+
+A squad-level timer detects when any squad member is far from cached cover cells. If so, it triggers an immediate refresh — limited to 1-2 fallback searches per tick to avoid lag spikes:
+
+```lua
+timer.Create("CAI_CoverCacheRefresh", 2.0, 0, function()
+    if not CAI.Enabled() then return end
+    for squad in pairs(CAI.Squad.All()) do
+    local sm = squad.blackboard.spatialMap
+    local budget = 2
+    for _, m in ipairs(squad.members) do
+        if budget <= 0 then break end
+        local d = CAI.Manager.Get(m)
+        if d and IsValid(m) then
+            local closest = CV.QueryNearby(d, m:GetPos(), C.Cover.SearchRadius)
+            if not closest then
+                local enemy, rec = CAI.Memory.FreshestEnemy(d)
+                local pos = CV.FindBestFallback(d, enemy, rec and rec.pos)
+                if pos then
+                    -- Store in spatialMap.cover for the squad
+                    local key = math.floor(pos.x / C.Cover.CellSize) .. ":" .. math.floor(pos.y / C.Cover.CellSize)
+                    if not sm.cover[key] then sm.cover[key] = {} end
+                    if #sm.cover[key] < C.Cover.MaxPerCell then
+                        table.insert(sm.cover[key], { pos = pos, weight = 0, validatedAt = CurTime() })
+                    end
+                end
+            end
+        end
     end
 end
 ```
 
-## Patrol — three-layer clearing model
+The detection condition: `QueryNearby` within `SearchRadius` returns nil → no cached cover in range → trigger refresh.
 
-The patrol uses three mechanisms to cool cells, each operating at a different scale:
+### Tier 3: Reactive FindBest fallback
 
-### 1. Aura (presence clearing)
-Every patrol tick, the NPC's position radiates a small cooling effect outward to `AuraRadiateRadius`. This clears the immediate ground the NPC walks on — already implemented via `RecordTemp` with a small radius.
-
-### 2. LOS cone (visual clearing)
-Every patrol tick, 5 rays are cast across the NPC's forward 90° FOV out to `ConeRange`. Each ray endpoint calls `RecordTemp(squad, endPos, -ConeCoolRate)`. This visual arc covers doorways, side corridors, and corners the NPC sees as they walk — without explicit corner detection.
-
-### 3. Patrol planner destination clearing
-When the leader arrives at `patrolPos`, `RecordTemp(squad, pos, -PatrolDecrement)` strongly cools that cell. This marks major waypoints as fully cleared.
-
-## Patrol planner (`squad_func/patrol.lua`) — chase neutral, not cold
-
-The planner queries cells **at or above baseline** (uncleared/unknown), not cold ones:
-
-1. Query spatial map for heatmap cells within `PatrolRadius` of leader
-2. Filter to cells with `temp >= C.Heatmap.Baseline - 2` (uncleared or just below)
-3. Pick the cell closest to baseline from the filtered set
-4. If any found: pick a random valid ground position within that cell (`CAI.Nav.RandomPointNear` at cell center with ~64u search radius), validate with `SafeGround` + navmesh, set as target
-5. On leader arrival at `patrolPos`, call `SM.RecordTemp(squad, pos, -PatrolDecrement)`
-6. Fallback: if all cells are cold or near-neutral, use existing random-point selection unchanged
-
-This naturally routes the patrol toward uncleared areas (T-junction cross-branches, uncleared rooms, blind corners) because those cells are still at neutral 25 while the patrolled path is below 25.
-
-## Natural clearing of T-junctions and corners
-
-No explicit corner detection needed. The three layers work together:
-
-- NPC walks up the T-junction's stem
-- LOS cone (forward sweep, 90° FOV, 5 rays) catches the left and right arms as the NPC's facing oscillates during movement
-- Cells in the side arms get cooled toward baseline
-- Patrol planner sees the side arm cells still near neutral (25) — still needs checking
-- Patrol planner selects a patrol point in the side arm → NPC walks there → cone sweeps it fully → cells drop below baseline → cleared
-- Next tick, the other arm is still warmer → patrol selects that one
-
-## SM.RecordTemp — radiating, replaces RecordDanger/RecordSafety
+When `QueryNearby` returns nil AND the cache refresh hasn't run yet, `FindBest` falls through to the expensive path. Result is stored in the cache:
 
 ```lua
-function SM.RecordTemp(squad, pos, delta, radius)
-    -- Same radiating loop as RecordDanger/RecordSafety
-    -- Clamp temp to 0-50
+function CV.FindBestFallback(data, enemy, enemyPos)
+    local npc = data.ent
+    local origin = IsValid(npc) and npc:GetPos()
+    if not origin then return nil end
+    local spots = CV.GatherSpots(origin, enemyPos, nil)
+    local best, bestScore = nil, -math.huge
+    for _, sp in ipairs(spots) do
+        local s = CV.ScoreSpot(data, sp, enemy, enemyPos)
+        if s > bestScore then best, bestScore = sp, s end
+    end
+    if best then
+        -- Store in cache
+        local sm = data.squad and data.squad.blackboard.spatialMap
+        if sm then
+            local key = math.floor(best.x / C.Cover.CellSize) .. ":" .. math.floor(best.y / C.Cover.CellSize)
+            if not sm.cover[key] then sm.cover[key] = {} end
+            if #sm.cover[key] < C.Cover.MaxPerCell then
+                table.insert(sm.cover[key], { pos = best, weight = 0, validatedAt = CurTime() })
+            end
+        end
+        return best
+    end
+    return nil
 end
 ```
 
-## Files changed
+Tier 2 and 3 both call this same function — the only difference is the trigger. Tier 2 runs proactively from the detection timer. Tier 3 runs reactively from `FindBest`'s fallback path.
 
-| File | Change |
-|------|--------|
-| `sv_spatialmap.lua` | Replace `RecordDanger`/`RecordSafety` with `RecordTemp`; update decay in `SM.Scan` |
-| `sv_cover.lua` | Update `QueryNearby` to read `temp` instead of `safety - danger`. Filter becomes `h.temp < C.Heatmap.DangerThreshold`. |
-| `sv_battlefield.lua` | Update `MarkCover` to call `RecordTemp(squad, pos, +HeatIncrement)` / `RecordTemp(squad, pos, -PatrolDecrement)` |
-| `suppression_jink.lua` | Update `RecordDanger` call to `RecordTemp(squad, src, +HeatIncrement)`; `QueryHeat` to `QueryTemp` |
-| `squad_func/patrol.lua` | Query cells with `temp >= Baseline - 2` (uncleared) instead of cold cells; apply `-PatrolDecrement` on arrival |
-| `exec/pre_contact.lua` | Add aura cooling + LOS cone cooling during patrol tick |
-| `sh_config.lua` | Replace old `C.Heatmap` block with new unified config including aura + cone + patrol radius |
+### Cache update on FindBest success
+
+After any successful `FindBest` call (Tier 2 or 3), the result is stored in `spatialMap.cover` under the appropriate grid cell key. Subsequent `QueryNearby` calls from any squad member will find it.
+
+### Invalidation
+
+`MarkCover(pos, false)` already calls `RecordTemp` which heats the cell. `QueryNearby` filters out cells with `temp >= DangerThreshold`. Stale entries in hot cells are effectively invisible — they're not removed, just skipped at query time.
+
+### Dependency: CV.GatherSpots
+
+`FindBestFallback` calls `CV.GatherSpots(origin, enemyPos, nil)` which was previously a local function in `sv_cover.lua`. It must be exposed on the `CV` table:
+
+```lua
+CV.GatherSpots = GatherSpots
+```
+
+This was already added in an earlier implementation step — verify it's still present before deploying Fix 3.
 
 ## Implementation Order
 
 | Step | What | Files |
 |------|------|-------|
-| ✅ | Config + RecordTemp + QueryTemp + decay | `sh_config.lua`, `sv_spatialmap.lua`, `sv_cover.lua`, `sv_battlefield.lua`, `suppression_jink.lua` |
-| ✅ | Patrol planner inverted query | `squad_func/patrol.lua` |
-| 🔲 | Patrol executor aura + cone | `exec/pre_contact.lua` |
+| 1 | Remove `planPending` + `plan.expiresAt` in compromise path | `sv_cover.lua` |
+| 2 | Gate `lost_target_coa.lua` COVER returns with cached `FindBest` | `lost_target_coa.lua` |
+| 3 | Restructure `FindBest` into three tiers + cache refresh timer | `sv_cover.lua`, `squad_func/plan.lua`, `sh_config.lua` |
 
-## Backwards compatibility
+## Files Changed
 
-- `SM.QueryTemp(squad, pos)` replaces `SM.QueryHeat` and returns `temp` (0-50). The jink heatmap gate becomes `QueryTemp(pos) < C.Heatmap.DangerThreshold` (below 35 → safe enough to hold, don't flee).
-- `RecordDanger` and `RecordSafety` are removed — replaced by `RecordTemp(squad, pos, delta)`. No external callers exist beyond CAI.
-- The old heatmap data structure ( `{ danger, safety }` ) is replaced by `{ temp }`. Existing heatmap entries are discarded — all start at `temp = 25` because spatial map entries are created fresh on first write.
+| File | Change |
+|------|--------|
+| `sv_cover.lua:232-241` | Remove `planPending` + `plan.expiresAt` from compromise path (lines 240-241) |
+| `sv_cover.lua` | Restructure `FindBest` to query cache first (`QueryNearby` with NPC's pos), fall back to `FindBestFallback` which stores in `spatialMap.cover`; verify `CV.GatherSpots` is exposed |
+| `lost_target_coa.lua` | Gate each COVER return behind `hasCover(data)` check using `FindBest` with 0.5s per-NPC cache |
+| `squad_func/plan.lua` | Add cache refresh timer: detect NPCs far from cached cover, trigger `FindBestFallback` (max 2/tick), store in `spatialMap.cover` |
+| `sh_config.lua` | No new config needed — existing `C.Cover.SearchRadius`, `C.Cover.CellSize`, `C.Cover.MaxPerCell` already apply |
+
+## Backwards Compatibility
+
+- `CV.FindBest` signature unchanged — still `(data, enemy, enemyPos)`. Internal restructuring is transparent.
+- `CV.QueryNearby` unchanged — already reads `spatialMap.cover` and heatmap. No change needed.
+- `CV.FindBestFallback` is new — contains the old `GatherSpots` + `ScoreSpot` pipeline. Extracted from `FindBest`.
+- `lost_target_coa.lua` behavior change: only returns COVER when cover is available. Previously returned COVER even without cover, which the exec handler then handled with a search loop.
+- Compromise path: removing `planPending` means the NPC stays in COVER phase after compromise and moves to the newly-found cover.
+- Cache entries in `spatialMap.cover` are shared through the existing squad blackboard system. No new data structures needed.

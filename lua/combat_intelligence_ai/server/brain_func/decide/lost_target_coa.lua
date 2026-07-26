@@ -1,5 +1,15 @@
 local BR = CAI.Brain
 
+local function hasCover(data)
+    if data._coverCheckAt and CurTime() - data._coverCheckAt < 0.5 then
+        return data._coverAvailable
+    end
+    local enemy, rec = CAI.Memory.FreshestEnemy(data)
+    data._coverCheckAt = CurTime()
+    data._coverAvailable = CAI.Cover.FindBest(data, enemy, rec and rec.pos) ~= nil
+    return data._coverAvailable
+end
+
 table.insert(BR.COA.Target, function(ctx)
     local data, npc, enemy, rec = ctx.data, ctx.npc, ctx.enemy, ctx.rec
     if not IsValid(enemy) or ctx.visible then return end
@@ -7,7 +17,6 @@ table.insert(BR.COA.Target, function(ctx)
     if data.suppressUntil and CurTime() < data.suppressUntil then
         if data.squad and #data.squad.members > 1
            and data.role ~= CAI.ROLE.SUPPRESSOR then
-            -- fall through to investigate/search/cover
         else
             return CAI.PHASE.ENGAGE, "suppress", 3, "squad_suppress_order"
         end
@@ -28,11 +37,11 @@ table.insert(BR.COA.Target, function(ctx)
         if rec and npc:GetPos():DistToSqr(rec.pos) < 350 * 350 then
             if ctx.dangerAvoid and CAI.Memory.AvoidPos(data, rec.pos,
                 CAI.Config.SelfPreserve.DangerAvoid.AllyDeathRadius) then
-                return CAI.PHASE.COVER, "hold", 2, "await_reacquire"
+                if hasCover(data) then return CAI.PHASE.COVER, "hold", 2, "await_reacquire" end
             end
             if ctx.holdUnknown and ctx.squadCovering()
                and not (data.squadPlan == "push" or data.squadPlan == "flank") then
-                return CAI.PHASE.COVER, "hold", 2, "await_reacquire"
+                if hasCover(data) then return CAI.PHASE.COVER, "hold", 2, "await_reacquire" end
             end
             data.investigatePos = rec.pos
             data.investigateUntil = CurTime() + 6
@@ -48,10 +57,10 @@ table.insert(BR.COA.Target, function(ctx)
     end
     if (CurTime() - (data.awaitAt or 0)) < 3 and not CAI.CVBool("cai_search") then
         data.awaitAt = data.awaitAt or CurTime()
-        return CAI.PHASE.COVER, "hold", 2, "await_reacquire"
+        if hasCover(data) then return CAI.PHASE.COVER, "hold", 2, "await_reacquire" end
     end
     if CAI.CVBool("cai_search") then
         return CAI.PHASE.PRE_CONTACT, "search", 4, "enemy_vanished"
     end
-    return CAI.PHASE.COVER, "hold", 2, "await_reacquire"
+    if hasCover(data) then return CAI.PHASE.COVER, "hold", 2, "await_reacquire" end
 end)

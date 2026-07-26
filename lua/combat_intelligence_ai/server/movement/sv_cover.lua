@@ -203,18 +203,47 @@ function CV.FindBest(data, enemy, enemyPos)
     local classInfo = CAI.Config.NPCClasses[data.ent:GetClass()]
     if classInfo and classInfo.noCover then return nil end
 
+    local npc = data.ent
+    local npcPos = IsValid(npc) and npc:GetPos()
+    if not npcPos then return nil end
+
+    local cached = CV.QueryNearby(data, npcPos, CAI.Config.Cover.SearchRadius)
+    if cached then return cached end
+
+    return CV.FindBestFallback(data, enemy, enemyPos)
+end
+
+function CV.FindBestFallback(data, enemy, enemyPos)
+    if not CAI.CVBool("cai_cover") then return nil end
+    local classInfo = CAI.Config.NPCClasses[data.ent:GetClass()]
+    if classInfo and classInfo.noCover then return nil end
+
+    local npc = data.ent
+    local npcPos = IsValid(npc) and npc:GetPos()
+    if not npcPos then return nil end
+
     local _tg = CAI.Prof.active and SysTime() or 0
-    local spots = GatherSpots(data.ent:GetPos(), enemy, enemyPos)
+    local spots = CV.GatherSpots(npcPos, enemy, enemyPos)
     if _tg ~= 0 then CAI.Prof.Record("cover_gather", SysTime() - _tg) end
     if #spots == 0 then return nil end
 
     local best, bestScore = nil, -math.huge
-
     local step = math.max(1, math.floor(#spots / 40))
     for i = 1, #spots, step do
         local s = CV.ScoreSpot(data, spots[i], enemy, enemyPos)
         if s > bestScore then best, bestScore = spots[i], s end
     end
+
+    if best and data.squad then
+        local sm = data.squad.blackboard.spatialMap
+        local cellSize = CAI.Config.Cover.CellSize
+        local key = math.floor(best.x / cellSize) .. ":" .. math.floor(best.y / cellSize)
+        if not sm.cover[key] then sm.cover[key] = {} end
+        if #sm.cover[key] < CAI.Config.Cover.MaxPerCell then
+            table.insert(sm.cover[key], { pos = best, weight = 0, validatedAt = CurTime() })
+        end
+    end
+
     return best, bestScore
 end
 
@@ -237,8 +266,6 @@ function CV.UpdateCoverStatus(data, enemy)
                 data.cover = { pos = newPos, since = CurTime() }
                 data.forceRecover = nil
                 CAI.Nav.MoveTo(data, newPos, "run")
-data.planPending = "cover_blown"
-data.plan.expiresAt = CurTime()
             end
         end
     else

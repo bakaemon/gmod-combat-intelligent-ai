@@ -242,3 +242,37 @@ function SF.Plan(squad)
         end
     end
 end
+
+timer.Create("CAI_CoverCacheRefresh", 2.0, 0, function()
+    if not CAI.Enabled() then return end
+    local cv = CAI.Cover
+    local cfg = CAI.Config.Cover
+    local seenSquads = {}
+    for npc, data in pairs(CAI.Manager.All()) do
+        local squad = data.squad
+        if squad and not seenSquads[squad] then
+            seenSquads[squad] = true
+            local sm = squad.blackboard.spatialMap
+            local budget = 2
+            for _, m in ipairs(squad.members) do
+                if budget <= 0 then break end
+                local d = CAI.Manager.Get(m)
+                if d and IsValid(m) then
+                    local closest = cv.QueryNearby(d, m:GetPos(), cfg.SearchRadius)
+                    if not closest then
+                        local enemy, rec = CAI.Memory.FreshestEnemy(d)
+                        local pos = cv.FindBestFallback(d, enemy, rec and rec.pos)
+                        if pos then
+                            local key = math.floor(pos.x / cfg.CellSize) .. ":" .. math.floor(pos.y / cfg.CellSize)
+                            if not sm.cover[key] then sm.cover[key] = {} end
+                            if #sm.cover[key] < cfg.MaxPerCell then
+                                table.insert(sm.cover[key], { pos = pos, weight = 0, validatedAt = CurTime() })
+                            end
+                            budget = budget - 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
