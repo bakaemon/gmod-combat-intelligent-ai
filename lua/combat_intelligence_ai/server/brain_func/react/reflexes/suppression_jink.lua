@@ -16,8 +16,12 @@ table.insert(BR.ReflexHandlers, function(data, dt)
         local away = src - enemyPos
         away.z = 0
         if away:LengthSqr() > 1 then
-            local dest = src + away:GetNormalized() * 200
-            biasVec = CAI.Nav.ReflexMove(data, dest)
+            if not BR.IsCommitted(data) then
+                local dest = src + away:GetNormalized() * 200
+                biasVec = CAI.Nav.ReflexMove(data, dest)
+            else
+                biasVec = away:GetNormalized() * 200
+            end
         end
     end
 
