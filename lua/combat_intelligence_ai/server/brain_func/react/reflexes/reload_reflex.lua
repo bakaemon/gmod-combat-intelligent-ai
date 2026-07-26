@@ -4,7 +4,8 @@ table.insert(BR.ReflexHandlers, function(data, dt)
     local npc = data.ent
     local wep = npc:GetActiveWeapon()
     if not IsValid(wep) or not wep.Clip1 or wep:Clip1() > 0 then return end
-    if npc.SelectWeightedSequence and npc:SelectWeightedSequence(ACT_RELOAD) < 0 then return end
+    local seq = npc.SelectWeightedSequence and npc:SelectWeightedSequence(ACT_RELOAD)
+    if seq == nil then return end
     local reloading = npc.IsCurrentSchedule and npc:IsCurrentSchedule(SCHED_RELOAD)
     if reloading then return end
     data._reloadingAt = CurTime()
