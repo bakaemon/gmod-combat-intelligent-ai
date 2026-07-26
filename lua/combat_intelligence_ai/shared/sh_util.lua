@@ -35,25 +35,26 @@ function U.EyePos(ent)
     return ent:GetPos() + Vector(0, 0, 60)
 end
 
-local traceCache, traceCacheTime = {}, {}
+local seeVal, seeTime = {}, {}
+local seeFilter = { NULL, NULL }
+local seeTrace = { start = nil, endpos = nil, filter = seeFilter, mask = MASK_BLOCKLOS }
 function U.CanSee(from, to)
     if not (IsValid(from) and IsValid(to)) then return false end
 
-    local key = from:EntIndex() .. ":" .. to:EntIndex()
     local now = CurTime()
-    if traceCacheTime[key] and now - traceCacheTime[key] < 0.2 then
-        return traceCache[key]
+    local key = from:EntIndex() * 65536 + to:EntIndex()
+    local t = seeTime[key]
+    if t and now - t < 0.2 then
+        return seeVal[key]
     end
     local _t = CAI.Prof.active and SysTime() or 0
-    local tr = util.TraceLine({
-        start = U.EyePos(from),
-        endpos = U.EyePos(to),
-        filter = { from, to },
-        mask = MASK_BLOCKLOS,
-    })
+    seeFilter[1], seeFilter[2] = from, to
+    seeTrace.start = U.EyePos(from)
+    seeTrace.endpos = U.EyePos(to)
+    local tr = util.TraceLine(seeTrace)
     local result = not tr.Hit
     if _t ~= 0 then CAI.Prof.Record("trace_cansee", SysTime() - _t) end
-    traceCache[key], traceCacheTime[key] = result, now
+    seeVal[key], seeTime[key] = result, now
     return result
 end
 
@@ -64,7 +65,7 @@ function U.Sees(from, to)
 end
 
 timer.Create("CAI_TraceCacheFlush", 30, 0, function()
-    traceCache, traceCacheTime = {}, {}
+    seeVal, seeTime = {}, {}
 end)
 
 function U.CanSeePos(viewer, pos)

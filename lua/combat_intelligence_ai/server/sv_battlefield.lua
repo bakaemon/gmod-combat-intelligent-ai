@@ -1,5 +1,6 @@
 CAI.Battlefield = CAI.Battlefield or {}
 local B = CAI.Battlefield
+local C = CAI.Config
 
 function B.New()
     return {
@@ -13,9 +14,11 @@ function B.New()
         spatialMap = {
             chokepoints = {},
             highGround = {},
+            cover = {},
             flankRoutes = {},
             rooms = {},
             doorways = {},
+            heatmap = {},
             lastScan = 0,
             scanIdx = 0,
         },
@@ -61,6 +64,11 @@ function B.MarkCover(squad, pos, success)
     local key = posKey(pos)
     local map = success and squad.blackboard.goodCover or squad.blackboard.badCover
     map[key] = (map[key] or 0) + 1
+    if success then
+        CAI.SpatialMap.RecordTemp(squad, pos, -C.Heatmap.PatrolDecrement)
+    else
+        CAI.SpatialMap.RecordTemp(squad, pos, C.Heatmap.HeatIncrement)
+    end
 end
 
 function B.CoverHistory(squad, pos)

@@ -1,23 +1,24 @@
 CAI.Config = CAI.Config or {}
 local C = CAI.Config
 
-CAI.STATE = {
-    IDLE = 0,
-    PATROL = 1,
-    ENGAGE = 2,
-    COVER = 3,
-    FLANK = 4,
-    SUPPRESS = 5,
-    SEARCH = 6,
-    RETREAT = 7,
-    INVESTIGATE = 8,
-    REGROUP = 9,
-    ROOM_CLEAR = 10,
-    BOUNDED = 11,
+CAI.PHASE = {
+    PRE_CONTACT = 0,
+    ASSESS      = 1,
+    ENGAGE      = 2,
+    MANEUVER    = 3,
+    COVER       = 4,
+    WITHDRAW    = 5,
+    POST_CONTACT = 6,
 }
 
-CAI.STATE_NAMES = {}
-for k, v in pairs(CAI.STATE) do CAI.STATE_NAMES[v] = k end
+CAI.PHASE_NAMES = {}
+for k, v in pairs(CAI.PHASE) do CAI.PHASE_NAMES[v] = k end
+
+function CAI.PhaseIs(data, phase, intent)
+    if data.phase ~= phase then return false end
+    if intent and data.phaseIntent ~= intent then return false end
+    return true
+end
 
 CAI.ROLE = {
     LEADER = 1,
@@ -53,6 +54,10 @@ function CAI.RegisterNPCClass(class, tbl)
     C.NPCClasses[class] = tbl or { faction = "custom" }
 end
 
+C.OODA = {
+    PhaseCooldown = 1.5,  -- minimum seconds before phase can change (state.lua + ooda.lua)
+}
+
 C.LOD = {
 
     { dist = 1500, interval = 0.15 },
@@ -67,6 +72,8 @@ C.Engage = {
     -- Distance (u) under which a NPC with no line of sight backs off to regain
     -- a sightline. With line of sight it simply holds and fires instead.
     PointBlank = 120,
+    -- Minimum seconds between SetSchedule calls (Entity.SetSchedule patch).
+    SchedCooldown = 0.2,
     -- Minimum seconds between re-issuing the fire schedule (no schedule thrash).
     RetryGap = 0.4,
     -- Distance (u) within which a known enemy (fresh memory, no clean LOS) is
@@ -134,6 +141,28 @@ C.Cover = {
         nearChokepoint = 0.6,
         dark = 0.5,
     },
+    CellSize = 128,
+    MapTTL = 8,
+    MaxPerCell = 6,
+    NearbyRadius = 500,
+    ScanBudget = 10,
+}
+
+C.Heatmap = {
+    Baseline = 25,
+    HeatIncrement = 10,
+    PatrolDecrement = 5,
+    HeatDecayRate = 0.25,
+    SafetyDecayRate = 0.4,
+    RadiateRadius = 200,
+    DangerThreshold = 35,
+    AuraRadiateRadius = 100,
+    AuraCoolRate = 0.5,
+    ConeRange = 500,
+    ConeFOV = 90,
+    ConeRays = 5,
+    ConeCoolRate = 1,
+    PatrolRadius = 1200,
 }
 
 C.Memory = {
@@ -548,6 +577,15 @@ C.Plan = {
     FlankMinMembers = 3,
     RetreatMoraleAvg = 30,
     PushAdvantage = 1.6,
+    PhaseDuration = {
+        [CAI.PHASE.PRE_CONTACT] = 4.5,
+        [CAI.PHASE.ASSESS] = 1.75,
+        [CAI.PHASE.ENGAGE] = 2.5,
+        [CAI.PHASE.MANEUVER] = 3.75,
+        [CAI.PHASE.COVER] = 2.25,
+        [CAI.PHASE.WITHDRAW] = 4.5,
+        [CAI.PHASE.POST_CONTACT] = 3,
+    },
 }
 
 C.LastVisGrace = 2.5
@@ -580,6 +618,10 @@ C.SquadTactics = {
     MoveShootFraction = 0.5,
     BattleAwarenessRadius = 1200,
     BattleAwarenessDuration = 8,
+    MinSpacing = 150,
+    PatrolFormation = true,
+    FormationBreakRadius = 600,
+    SuppressorRatio = 0.33,
 }
 
 C.Push = {
