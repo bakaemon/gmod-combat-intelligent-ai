@@ -27,6 +27,7 @@ You are an expert Garry's Mod Lua engineer for the Combat Intelligent AI (CIA) a
 ### Load order and file structure
 - `lua/autorun/cai_init.lua` sets up the global `CAI` table, then includes shared
   files, then server files, then client files. Always add new modules there.
+- `lua/combat_intelligence_ai/`
 - `shared/`
   - `sh_config.lua`: `CAI.Config.*` tuning values plus the `CAI.STATE` and `CAI.ROLE`
     enums. Put tuning constants here, never hardcoded in logic.
@@ -37,6 +38,13 @@ You are an expert Garry's Mod Lua engineer for the Combat Intelligent AI (CIA) a
 - `server/sv_manager.lua`: registers each NPC (builds the per-NPC `data` record in
   `MG.Register`) and runs the `CAI_Scheduler` tick loop.
 - `server/sv_brain.lua` plus `server/brain_func/*.lua`: the brain (see Logic below).
+  - `brain_func/state.lua`: `BR.SetState`, `BR.StopSuppressing`, `BR.Prefire`, `BR.FireSchedule`.
+  - `brain_func/perceive.lua`: `BR.Perceive`.
+  - `brain_func/sense.lua`: `BR.CombatTarget`, `BR.MeleeThreatScan`.
+  - `brain_func/decide.lua`: `BR.Decide`. Loads COA modules from `decide/*.lua`.
+  - `brain_func/exec.lua`: `BR.Exec[0..11]`. Loads per-state handlers from `exec/*.lua`.
+  - `brain_func/react.lua`: `BR.IsCommitted`, `BR.UnderFire`, `BR.Flinch`. Low-level flinch/evade layer.
+  - `brain_func/think.lua`: `BR.Think`. Per-tick orchestrator.
 - `server/sv_*.lua`: the behavior subsystems (see Subsystem map below).
 - `client/cl_debug.lua`, `cl_settings.lua`, `cl_light.lua`, `cl_vjsettings.lua`: overlay,
   UI, lighting, and VJ base support. Note these are the files upstream changes most
@@ -49,13 +57,20 @@ in `MG.Register` and almost every system reads or writes it. Key fields:
 - `faction`, `voiceGender`, `personality` (from `CAI.Personality.Generate`).
 - `memory` (`CAI.Memory.New()`): `enemies`, `sounds`, `dangers`, `deadAllies`.
 - `morale`, `suppression`: scalar state that drive retreat/cover decisions.
-- `state`, `stateSince`, `nextThink`, `lastThink`, `lastDecision`.
+- `state`, `prevState`, `stateSince`, `nextThink`, `lastThink`, `lastDecision`.
 - Combat fields: `combatTarget`, `combatRec` (last-known enemy position/record).
 - Squad/door/flank fields: `squad`, `role`, `clearingDoor`, `boundTarget`, `wantBound`,
-  `wantFlank`, `suppressUntil`, `flank`, `reinforceTarget`, `staggerOffset`.
-- `investigatePos`, `investigateUntil`: where the NPC is moving to look.
-- `retreatDest`, `coverPhase`, and other transient per-state fields cleared on
-  `SetState`.
+  `wantFlank`, `suppressUntil`, `flank`, `flankBreak`, `flankHoldUntil`,
+  `reinforceTarget`, `staggerOffset`.
+- Suppression fields: `suppBullseye` (invisible `npc_bullseye` proxy), `suppFaced`,
+  `prefireUntil`.
+- Retaliate suppression fields: `retalBullseye`, `retaliateHits`, `retalPrevEnemy`.
+- Melee ambush fields: `ambush`, `meleePhase`, `meleeAmbusher`, `ambushPos`.
+- Investigate/cover fields: `investigatePos`, `investigateUntil`, `cover`, `coverBounces`,
+  `coverSearchFailures`, `pinnedCover`, `pinnedCoverUntil`, `pinnedFlee`, `pinnedFleeUntil`.
+- `retreatDest`, `coverPhase`, `coverPhaseEnd`, `fleeSched`, `investFaced`,
+  `moveTarget`, `moveIssuedAt`, `patrolTarget`, and other transient per-state fields
+  cleared on `SetState`.
 
 **The loop**, driven by `sv_manager.lua`'s scheduler (rate `ManagerTickRate`, per-tick
 budget `MaxBrainThinksPerTick`, wrapped in `pcall`):
@@ -68,59 +83,71 @@ budget `MaxBrainThinksPerTick`, wrapped in `pcall`):
 5. `BR.Exec[data.state](data)` performs the action for that state.
 Light-touch NPCs (far away, low LOD) only run `Perceive`, not the full cycle.
 
-**`BR.Decide` cascade** (priority order, most urgent first; verified in `decide.lua`):
-1. `forceRecover` set (player aimed at us) -> COVER `emergency_relocate`.
-2. `scatterUntil` active (grenade) -> RETREAT `grenade_scatter`.
-3. Point-blank swarm / melee encirclement, or recent melee hit -> RETREAT
-   `escape_encirclement`, or ENGAGE `point_blank_fight` if armed.
-4. Morale broken -> RETREAT `morale_broken` (or ENGAGE `cornered_melee` if `cai_meleepanic`
-   and cornered with an empty weapon).
-5. Suppression panic and low courage -> RETREAT `suppression_panic`.
-6. No weapon and recent threat -> RETREAT `unarmed_flee`.
-7. Melee weapon with fresh enemy memory -> ENGAGE `melee_chase`.
-8. Squad is clearing a doorway -> ROOM_CLEAR `clearing_doorway`.
-9. `CAI.Target.Evaluate` found an enemy:
-   - visible: continue an in-progress flank, or go COVER if pinned/reloading, or FLANK
-     on a squad order, or SUPPRESS on a squad order, or REGROUP if separated from leader,
-     or BOUNDED on a squad bind order, else ENGAGE (close range, aggressive push,
-     `hold_and_fight` when starved of engagement, or default `engage_target`). Rocket or
-     shotgun threats force COVER. A squad retreat plan forces RETREAT.
-   - not visible (lost): continue flank/suppress, REGROUP if separated, else if the
-     last-known position is fresh and close go INVESTIGATE `heard_close` (or COVER
-     `await_reacquire` when avoiding a known danger or holding an unknown angle), if it
-     is fresh but not close go INVESTIGATE `reacquire_advance`, else SEARCH
-     (`enemy_vanished` when `cai_search` is on), else COVER `await_reacquire`.
-10. No enemy but squad is pushing/flanking and a nearby friendly battle was heard ->
-    INVESTIGATE `nearby_battle`, gated by a commitment vs. personality/morale score.
-11. `reinforceTarget` set -> REGROUP `reinforcing`.
-12. Separated from squad leader (distance thresholds) -> REGROUP `rejoin_squad`.
-13. `investigatePos` still valid -> INVESTIGATE `heard_something`.
-14. Fallback -> PATROL `all_quiet`.
+**`BR.Decide` COA system** (`decide.lua` loads COA modules from `decide/*.lua`):
 
-**`BR.Exec[0..11]`** per-state handlers (one or two lines each):
+`decide.lua` runs two phases. First it iterates `BR.COA.PreTarget` (immediate overrides
+that need no combat target). Then it acquires the combat target via `CAI.Target.Evaluate`
+and iterates `BR.COA.Target` (target-dependent courses of action). The first non-nil
+return wins. Fallback is `PATROL` `all_quiet`.
+
+**PreTarget COAs** (immediate overrides, no enemy required):
+1. `emergency_relocate.lua`: player aimed at us -> COVER.
+2. `grenade_scatter.lua`: grenade incoming -> RETREAT.
+3. `flank_protect.lua`: in-progress flank -> FLANK (evaluates break chance).
+4. `melee_swarm.lua`: point-blank swarm / melee encirclement -> ENGAGE or RETREAT.
+5. `morale_broken.lua`: morale broken -> RETREAT (or ENGAGE if cornered melee).
+6. `morale_panic.lua`: suppression panic -> RETREAT.
+7. `melee_chase.lua`: melee weapon with fresh enemy -> ENGAGE, FLANK, or chase.
+8. `room_clear.lua`: squad clearing a doorway -> ROOM_CLEAR.
+
+**Target COAs** (need a combat target, run in registration order):
+1. `cover_hold.lua`: visible and pinned by fire -> COVER, or duck to reload.
+2. `flank.lua`: squad flank order -> FLANK.
+3. `squad_suppress_order.lua`: squad suppress order -> SUPPRESS.
+4. `separated_from_squad.lua`: too far from leader -> REGROUP.
+5. `squad_bound_order.lua`: squad bind order -> BOUNDED.
+6. `engage.lua`: visible enemy -> ENGAGE (close range, aggressive push, `hold_and_fight`,
+   rocket/shotgun threats force COVER, squad retreat forces RETREAT).
+7. `lost_target.lua`: valid enemy but not visible -> INVESTIGATE, SEARCH, or COVER.
+8. `squad_aware.lua`: no enemy, squad pushing/flanking, friendly battle heard ->
+   INVESTIGATE `nearby_battle`, or REGROUP `reinforcing`/`rejoin_squad`.
+9. `patrol.lua`: fallback -> PATROL.
+
+**`BR.Exec[0..11]`** per-state handlers, one file each in `exec/`:
 - `0` IDLE: nothing to do.
 - `1` PATROL: walk a patrol path / area.
-- `2` ENGAGE: shoot the combat target, manage range and ammo.
+- `2` ENGAGE: shoot the combat target, manage range and ammo. Run-and-gun logic (fire while advancing during squad pushes).
 - `3` COVER: move to and hold cover, peek and shoot.
 - `4` FLANK: take a computed side route toward the enemy.
 - `5` SUPPRESS: fire at the last-known position via the bullseye proxy.
 - `6` SEARCH: sweep last-known-area search points.
 - `7` RETREAT: fall back to a safe destination.
-- `8` INVESTIGATE: move to `investigatePos` to look.
+- `8` INVESTIGATE: move to `investigatePos` to look. CQB push logic (advance when fresh memory).
 - `9` REGROUP: move back toward the squad leader.
 - `10` ROOM_CLEAR: clear a doorway / room with the squad.
 - `11` BOUNDED: hold a position ordered by the squad.
 
+**`react.lua` (Flinch layer)** runs every tick AFTER the state machine. It biases
+MOVEMENT only (never calls `SetState`):
+- `BR.IsCommitted(data)`: true when a weapon wind-up (melee swing, energy ball) must not be interrupted.
+- `BR.UnderFire(data)`: true when taking fire from a visible attacker.
+- `BR.Flinch(data)`: the evade rule. If already in effective cover, SUPPRESS, or holding fire, yields. Otherwise runs-and-guns (issues `SCHED_CHASE_ENEMY` so the NPC fires while dodging). Also handles the retaliate suppression reflex (bullseye targeting, `retaliateHits` threshold).
+
 **`BR.SetState`** clears transient per-state fields (for example `retreatDest`,
-`coverPhase`) so a state change starts clean. `StopSuppressing` ends suppression fire,
-and `Prefire` aims the bullseye proxy at a position.
+`coverPhase`, `coverPhaseEnd`, `suppFaced`, `fleeSched`, `investFaced`, `ambush`,
+`meleePhase`, `moveTarget`, `moveIssuedAt`, `patrolTarget`) so a state change
+starts clean. Outside of COVER it also clears `cover` to prevent stale shelter
+data. `StopSuppressing` ends suppression fire (clears enemy reference before
+removing the bullseye entity). `Prefire` aims the bullseye proxy at a position.
+`FireSchedule` issues the appropriate schedule (melee attack, chase, or establish
+line of fire).
 
 ### Subsystem map (`server/sv_*.lua`)
 Perception and memory:
 - `sv_memory.lua`: enemy/sound/danger/dead-ally memory with timed fade and
   `AvoidPos` danger checks.
 - `sv_target.lua`: `Evaluate` and `Score` pick the best enemy to engage.
-- `sv_sound.lua`: classify world sounds (gunshot, explosion, footsteps) into memory.
+- `sv_sound.lua`: classify world sounds (gunshot, explosion, footsteps, battle) into memory. Also handles sound intel (sound intelligence feature).
 - `sv_weaponintel.lua`: recognize weapon archetypes and produce ranged responses
   (rocket, shotgun keep-distance, etc.).
 - `sv_darkness.lua`: low-light vision penalty from player/map lighting.
@@ -139,7 +166,7 @@ Combat behavior:
 - `sv_squad.lua`: squad creation, roles, formation, `Place` / `Broadcast`, and
   battlefield sharing.
 - `sv_friendlyfire.lua`: check allies are not in the line of fire.
-- `sv_morale.lua`: morale changes, `IsBroken`, `RecentMeleeHits`.
+- `sv_morale.lua`: morale changes, `IsBroken`, `RecentMeleeHits`, `retaliateHits`.
 - `sv_voice.lua`: build and play voice-line libraries.
 - `sv_battlefield.lua`: shared battle state (enemies, dangers, cover, blocked paths).
 
@@ -173,7 +200,7 @@ Lifecycle and meta:
 ## Boundaries
 - Always: run `luac5.1 -p` on changed files, keep `Decide` pure, keep brain cross-file
   calls on `BR.*`, and treat the shippable addon as `lua/` plus `addon.json`.
-- Ask first: behavioral changes to the Decide cascade or Exec handlers (they change how
+- Ask first: behavioral changes to the Decide COA modules or Exec handlers (they change how
   the AI feels), touching upstream-only debug files (`sv_debug.lua` / `cl_debug.lua`)
   without a real need, or adding any `build/` / `*.sh` references to the repo.
 - Never: commit secrets or keys; reference the private build/publish scripts in

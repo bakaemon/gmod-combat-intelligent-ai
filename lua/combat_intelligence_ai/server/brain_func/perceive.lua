@@ -22,7 +22,8 @@ BR.Perceive = function(data)
                 data.aimedSince = data.aimedSince or CurTime()
                 if CurTime() - data.aimedSince > 0.35 then
                     CAI.Memory.SeeEnemy(data, ply, ply:GetPos())
-                    if data.state == CAI.STATE.COVER and not data.forceRecover
+                    if CAI.PhaseIs(data, CAI.PHASE.COVER)
+                       and not data.forceRecover
                        and math.random() < 0.35 then
                         data.forceRecover = true
                     end
@@ -45,15 +46,21 @@ BR.Perceive = function(data)
                 CAI.Battlefield.ReportEnemy(data.squad, engineEnemy, engineEnemy:GetPos(), npc)
                 if firstContact then
                     CAI.Voice.Speak(data, "enemy_spotted")
-                    CAI.Squad.Broadcast(data.squad, "enemy_spotted", npc,
-                        { enemy = engineEnemy, pos = engineEnemy:GetPos() })
-                    data.squad.lastHelpCallAt = data.squad.lastHelpCallAt or 0
-                    if CurTime() - data.squad.lastHelpCallAt > 6 then
-                        data.squad.lastHelpCallAt = CurTime()
-                        CAI.Squad.Broadcast(data.squad, "need_help", npc,
-                            { pos = engineEnemy:GetPos() })
+                    if engineEnemy:GetClass() ~= "npc_bullseye" then
+                        CAI.Squad.Broadcast(data.squad, "enemy_spotted", npc,
+                            { enemy = engineEnemy, pos = engineEnemy:GetPos() })
+                        data.squad.lastHelpCallAt = data.squad.lastHelpCallAt or 0
+                        if CurTime() - data.squad.lastHelpCallAt > 6 then
+                            data.squad.lastHelpCallAt = CurTime()
+                            CAI.Squad.Broadcast(data.squad, "need_help", npc,
+                                { pos = engineEnemy:GetPos() })
+                        end
                     end
                 end
+            end
+            if firstContact then
+                data.planPending = "enemy_spotted"
+                data.plan.expiresAt = CurTime()
             end
         else
             local rec = data.memory.enemies[engineEnemy]

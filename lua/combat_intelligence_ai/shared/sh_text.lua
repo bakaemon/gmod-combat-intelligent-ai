@@ -1,16 +1,13 @@
 CAI.Config.Text = {
 
-    States = {
-        [0] = "IDLE",
-        [1] = "PATROL",
+    Phases = {
+        [0] = "PRE_CONTACT",
+        [1] = "ASSESS",
         [2] = "ENGAGE",
-        [3] = "COVER",
-        [4] = "FLANK",
-        [5] = "SUPPRESS",
-        [6] = "SEARCH",
-        [7] = "RETREAT",
-        [8] = "INVESTIGATE",
-        [9] = "REGROUP",
+        [3] = "MANEUVER",
+        [4] = "COVER",
+        [5] = "WITHDRAW",
+        [6] = "POST_CONTACT",
     },
 
     Roles = {
@@ -32,6 +29,7 @@ CAI.Config.Text = {
         memE = "mem E:",
         memD = " D:",
         lod = "lod ",
+        intent = "intent:",
     },
 
     Reasons = {

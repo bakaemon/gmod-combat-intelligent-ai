@@ -41,8 +41,25 @@ function MG.Register(npc)
         memory = CAI.Memory.New(),
         morale = CAI.Config.Morale.Start + math.random(-10, 10),
         suppression = 0,
-        state = CAI.STATE.IDLE,
-        stateSince = CurTime(),
+        phase = CAI.PHASE.PRE_CONTACT,
+        phaseIntent = "patrol",
+        phaseSince = CurTime(),
+        plan = {
+            expiresAt = CurTime() + 5,
+            started = CurTime(),
+            reason = "registered",
+            committedUntil = CurTime() + 0.5,
+        },
+        reflex = {
+            bias = nil,
+            urgency = nil,
+            grenadePos = nil,
+            grenadeUntil = nil,
+            emergencyCover = nil,
+            emergencyUntil = nil,
+            meleeThreatAt = nil,
+        },
+        planPending = nil,
         nextThink = CurTime() + math.Rand(0, 0.3),
         lastThink = CurTime(),
         lastDecision = "registered",
@@ -60,6 +77,9 @@ function MG.Register(npc)
         clearPhase = nil,
         clearAngle = nil,
         clearSliceStart = nil,
+        retaliateTarget = nil,
+        retaliateUntil = nil,
+        retaliatePos = nil,
     }
     if data.faction == "combine" then
         pcall(function() npc:SetSaveValue("m_iNumGrenades", 2) end)
@@ -74,6 +94,7 @@ function MG.Register(npc)
 
     CAI.Nav.EnableDoorUse(npc)
     CAI.Squad.Place(npc)
+    CAI.FireAim.Alloc(data)
 
     npc:CallOnRemove("CAI_Unregister", function() MG.Unregister(npc) end)
 end
@@ -91,6 +112,7 @@ function MG.Unregister(npc)
     local data = MG.NPCs[npc]
     if not data then return end
     MG.Count = math.max(0, (MG.Count or 1) - 1)
+    CAI.FireAim.Stop(data)
     if IsValid(data.suppBullseye) then data.suppBullseye:Remove() end
     if IsValid(data.flashlight) then data.flashlight:Remove() end
     if IsValid(data.flashglow) then data.flashglow:Remove() end
