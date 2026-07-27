@@ -45,7 +45,7 @@ Server("server/combat/sv_morale.lua")
 Server("server/combat/sv_voice.lua")
 Server("server/combat/sv_friendlyfire.lua")
 Server("server/sv_squad.lua")
-Server("server/sv_brain.lua")
+Server("server/brain.lua")
 Server("server/sv_fireaim.lua")
 Server("server/sv_manager.lua")
 
