@@ -161,12 +161,17 @@ local function handler(data)
         local me, mrec = BR.CombatTarget(data)
         local threat = (IsValid(me) and me:GetPos()) or (mrec and mrec.pos)
         if not threat then return end
+        local a = data.ambush
 
+        local pounce = acfg.PounceDist
+        if a and a.alerted and now - a.alerted < 3 then
+            pounce = pounce * acfg.AlertPounceMult
+        end
         local dSqr = IsValid(me) and npc:GetPos():DistToSqr(me:GetPos()) or math.huge
         local spotted = IsValid(me) and CAI.Util.CanSee(me, npc)
-        if dSqr < acfg.PounceDist * acfg.PounceDist
-           or (spotted and dSqr < (acfg.PounceDist * 1.6) ^ 2) then
-            data.ambush = nil
+        if dSqr < pounce * pounce
+           or (spotted and dSqr < (pounce * 1.6) ^ 2) then
+            data.ambush, data.ambushRetry = nil, nil
             data.lastDecision = "melee_chase"
             decision = "melee_chase"
             if npc.SetEnemy then npc:SetEnemy(me) end
@@ -174,30 +179,112 @@ local function handler(data)
             return
         end
 
-        if not data.ambush
-           or now - data.ambush.since > acfg.MaxWait
-           or threat:DistToSqr(data.ambush.threat) > acfg.RepickDist * acfg.RepickDist then
-            local spot = FindAmbushSpot(data, me, threat)
+        if a and a.settled and not spotted
+           and now - (data.lastHurtAt or 0) < acfg.HurtBreakTime then
+            a, data.ambush = nil, nil
+        end
+
+        local needSpot = not a
+            or threat:DistToSqr(a.threat) > acfg.RepickDist * acfg.RepickDist
+        if a and not a.settled then
+            if now - a.since > acfg.PathTimeout then needSpot = true end
+            local ply, plyDSqr = CAI.Util.NearestPlayer(a.pos)
+            if IsValid(ply) and plyDSqr < acfg.SpotTakenDist * acfg.SpotTakenDist then
+                needSpot = true
+            end
+        elseif a and a.settled and now > (a.holdUntil or 0) then
+            needSpot = true
+        end
+
+        if needSpot then
+            data.ambushRetry = (data.ambushRetry or 0) + 1
+            local spot = data.ambushRetry <= acfg.MaxRetries
+                and FindAmbushSpot(data, me, threat) or nil
             if not spot then
+                data.ambush, data.ambushRetry = nil, nil
                 data.lastDecision = "melee_chase"
                 decision = "melee_chase"
                 return
             end
-            data.ambush = { pos = spot, since = now, threat = threat }
+            a = { pos = spot, since = now, threat = threat }
+            data.ambush = a
             CAI.Nav.MoveTo(data, spot, "run")
         end
 
-        if not CAI.Nav.Arrived(data, 60) then
+        if not a.settled then
+            local range = npc:GetPos():Distance(a.pos)
+
+            if not a.lookedOut and range < acfg.LookOutDist and range > 20 then
+                a.lookedOut = true
+                local out = npc:GetPos() - a.pos
+                out.z = 0
+                if out:Length2DSqr() > 1 and npc.SetIdealYawAndUpdate then
+                    npc:SetIdealYawAndUpdate(out:Angle().yaw)
+                end
+            end
+
+            if range < acfg.ArriveDist or CAI.Nav.Arrived(data, acfg.ArriveDist) then
+                a.settled = true
+                a.settledAt = now
+                a.holdUntil = now + math.Rand(acfg.HoldMin, acfg.HoldMax)
+                data.ambushRetry = nil
+                data.moveTarget = nil
+
+                local watchYaw
+                local toThreat = threat - npc:GetPos()
+                toThreat.z = 0
+                if mrec and now - (mrec.t or 0) < 8 and toThreat:Length2DSqr() > 1 then
+                    watchYaw = toThreat:Angle().yaw
+                else
+                    local eye = npc:EyePos()
+                    local bestOpen = -1
+                    for i = 0, 7 do
+                        local ang = math.rad(i * 45)
+                        local dir = Vector(math.cos(ang), math.sin(ang), 0)
+                        local tr = util.TraceLine({
+                            start = eye, endpos = eye + dir * 1000,
+                            filter = npc, mask = MASK_SOLID_BRUSHONLY,
+                        })
+                        if tr.Fraction > bestOpen then
+                            bestOpen, watchYaw = tr.Fraction, dir:Angle().yaw
+                        end
+                    end
+                end
+                if watchYaw and npc.SetIdealYawAndUpdate then
+                    npc:SetIdealYawAndUpdate(watchYaw)
+                end
+                CAI.Schedule(data, SCHED_IDLE_STAND)
+                return
+            end
+
             if now - (data.moveIssuedAt or 0) > 1.2 then
-                CAI.Nav.MoveTo(data, data.ambush.pos, "run")
+                CAI.Nav.MoveTo(data, a.pos, "run")
             end
             return
+        end
+
+        if now - (a.settledAt or 0) > acfg.SettleGrace then
+            local sounds = data.memory.sounds
+            local alertSqr = acfg.NoiseAlertDist * acfg.NoiseAlertDist
+            for i = #sounds, 1, -1 do
+                local snd = sounds[i]
+                if now - snd.t > 1.5 then break end
+                if npc:GetPos():DistToSqr(snd.pos) < alertSqr then
+                    a.alerted = now
+                    local toS = snd.pos - npc:GetPos()
+                    toS.z = 0
+                    if toS:Length2DSqr() > 1 and npc.SetIdealYawAndUpdate then
+                        npc:SetIdealYawAndUpdate(toS:Angle().yaw)
+                    end
+                    break
+                end
+            end
         end
 
         if now - (data.ambushHoldAt or 0) > 2 then
             data.ambushHoldAt = now
             data.moveTarget = nil
-            npc:SetSchedule(SCHED_IDLE_STAND)
+            CAI.Schedule(data, SCHED_IDLE_STAND)
         end
         return
     end

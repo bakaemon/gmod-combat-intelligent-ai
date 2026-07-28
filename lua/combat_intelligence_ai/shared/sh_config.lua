@@ -232,13 +232,12 @@ C.Flinch = {
     UnderFireAt = 10,
 }
 
--- Weapons that are not a ranged threat
-C.NonCombatWeapons = {
+-- Weapons that are not a threat.
     "physgun", "physcannon", "gmod_tool", "gmod_camera", "weapon_camera",
     "keys", "bugbait", "hands", "weapon_medkit", "flashlight", "remotecontroller",
 }
 
--- Hand weapons that are dangerous
+-- Hand weapons that are not treated as guns
 C.MeleeWeapons = {
     "crowbar", "stunstick", "melee", "knife", "bat", "fist", "axe",
     "hammer", "machete", "katana", "sword", "shovel", "pipe", "wrench",
@@ -666,8 +665,8 @@ C.Escape = {
 
 C.Melee = {
     ThreatRecheck   = 0.25,  
-    GunPanicDist    = 260,   
-    CornerRadius    = 220,  
+    GunPanicDist    = 260,  
+    CornerRadius    = 220,   
     CornerBonus     = 3.0,   
     SwingRange      = 140,  
     ReSwing         = 0.55,  
@@ -690,6 +689,17 @@ C.Melee = {
         MaxWait    = 12,   
         PounceDist = 420,  
         RepickDist = 900,  
+        HoldMin        = 8,
+        HoldMax        = 20,
+        SpotTakenDist  = 90,   
+        MaxRetries     = 3,    
+        LookOutDist    = 220,  
+        ArriveDist     = 60,
+        PathTimeout    = 6,    
+        HurtBreakTime  = 1.0,  
+        NoiseAlertDist = 320,  
+        SettleGrace    = 2.0,  
+        AlertPounceMult = 1.5, 
     },
 }
 
