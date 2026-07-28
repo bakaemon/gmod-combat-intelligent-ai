@@ -232,6 +232,18 @@ C.Flinch = {
     UnderFireAt = 10,
 }
 
+-- Weapons that are not a ranged threat
+C.NonCombatWeapons = {
+    "physgun", "physcannon", "gmod_tool", "gmod_camera", "weapon_camera",
+    "keys", "bugbait", "hands", "weapon_medkit", "flashlight", "remotecontroller",
+}
+
+-- Hand weapons that are dangerous
+C.MeleeWeapons = {
+    "crowbar", "stunstick", "melee", "knife", "bat", "fist", "axe",
+    "hammer", "machete", "katana", "sword", "shovel", "pipe", "wrench",
+}
+
 C.WeaponPatterns = {
     { pattern = "shotgun", archetype = "shotgun" },
     { pattern = "sniper", archetype = "sniper" }, { pattern = "awp", archetype = "sniper" },
@@ -255,6 +267,7 @@ C.WeaponResponses = {
     smg = { idealDist = 350, aggression = 0.35 },
     pistol = { idealDist = 400, aggression = 0.45 },
     rifle = { idealDist = 700, aggression = 0.0 },
+    unarmed = { idealDist = 250, aggression = 0.6 },
 }
 
 C.SoundPatterns = {
@@ -652,6 +665,10 @@ C.Escape = {
 }
 
 C.Melee = {
+    ThreatRecheck   = 0.25,  
+    GunPanicDist    = 260,   
+    CornerRadius    = 220,  
+    CornerBonus     = 3.0,   
     SwingRange      = 140,  
     ReSwing         = 0.55,  
     StepTime        = 0.35,  

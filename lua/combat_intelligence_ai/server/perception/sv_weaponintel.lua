@@ -2,13 +2,18 @@ CAI.WeaponIntel = CAI.WeaponIntel or {}
 local WI = CAI.WeaponIntel
 
 local archetypeCache = {}
+local threatCache = {}
 
 function WI.Classify(wep)
-    if not IsValid(wep) then return "rifle" end
+    if not IsValid(wep) then return "unarmed" end
     local cls = wep:GetClass()
     local cached = archetypeCache[cls]
     if cached then return cached end
     local lower = string.lower(cls)
+    if WI.ThreatOfClass(cls) == "unarmed" then
+        archetypeCache[cls] = "unarmed"
+        return "unarmed"
+    end
     for _, p in ipairs(CAI.Config.WeaponPatterns) do
         if lower:find(p.pattern, 1, true) then
             archetypeCache[cls] = p.archetype
@@ -17,6 +22,42 @@ function WI.Classify(wep)
     end
     archetypeCache[cls] = "rifle"
     return "rifle"
+end
+
+function WI.ThreatOfClass(cls)
+    if not cls or cls == "" then return "unarmed" end
+    local cached = threatCache[cls]
+    if cached then return cached end
+    local lower = string.lower(cls)
+    local out = "gun"
+    for _, pat in ipairs(CAI.Config.NonCombatWeapons) do
+        if lower:find(pat, 1, true) then out = "unarmed" break end
+    end
+    if out == "gun" then
+        for _, pat in ipairs(CAI.Config.MeleeWeapons) do
+            if lower:find(pat, 1, true) then out = "melee" break end
+        end
+    end
+    threatCache[cls] = out
+    return out
+end
+
+function WI.ThreatClass(ent)
+    if not IsValid(ent) then return "unarmed" end
+    local wep = ent.GetActiveWeapon and ent:GetActiveWeapon()
+    if not IsValid(wep) then
+        if ent.CapabilitiesGet and CAP_INNATE_MELEE_ATTACK1 then
+            if bit.band(ent:CapabilitiesGet(), CAP_INNATE_MELEE_ATTACK1) ~= 0 then
+                return "melee"
+            end
+        end
+        return "unarmed"
+    end
+    return WI.ThreatOfClass(wep:GetClass())
+end
+
+function WI.HasGun(ent)
+    return WI.ThreatClass(ent) == "gun"
 end
 
 function WI.Update(data, enemy)
@@ -96,17 +137,7 @@ end
 
 function WI.IsMeleeThreat(ent)
     if not IsValid(ent) then return false end
-    local wep = ent.GetActiveWeapon and ent:GetActiveWeapon()
-    if IsValid(wep) then
-        local c = wep:GetClass()
-        return c:find("crowbar", 1, true) ~= nil
-            or c:find("stunstick", 1, true) ~= nil
-            or c:find("melee", 1, true) ~= nil
-    end
-    if ent.CapabilitiesGet then
-        return bit.band(ent:CapabilitiesGet(), CAP_INNATE_MELEE_ATTACK1) ~= 0
-    end
-    return true
+    return WI.ThreatClass(ent) == "melee"
 end
 
 CAI.Prof.WrapFn(WI, "Update", "weaponintel_update")

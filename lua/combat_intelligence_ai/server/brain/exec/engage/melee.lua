@@ -1,8 +1,82 @@
 local BR = CAI.Brain
 
+local cornerCache = {}
+local function CornerScore(pos)
+    local key = math.floor(pos.x / 64) .. ":" .. math.floor(pos.y / 64)
+        .. ":" .. math.floor(pos.z / 64)
+    local c = cornerCache[key]
+    if c and CurTime() - c.t < 15 then return c.v end
+    local eye = pos + Vector(0, 0, 40)
+    local hits = 0
+    for i = 0, 7 do
+        local a = math.rad(i * 45)
+        local tr = util.TraceLine({
+            start = eye,
+            endpos = eye + Vector(math.cos(a), math.sin(a), 0) * 90,
+            mask = MASK_SOLID_BRUSHONLY,
+        })
+        if tr.Hit then hits = hits + 1 end
+    end
+    local v = 0
+    if hits >= 2 and hits <= 4 then v = 1
+    elseif hits == 5 then v = 0.5 end
+    if table.Count(cornerCache) > 256 then cornerCache = {} end
+    cornerCache[key] = { v = v, t = CurTime() }
+    return v
+end
+
+local function FindAmbushSpot(data, enemy, threatPos)
+    local mcfg = CAI.Config.Melee
+    data.wantDarkCover = true
+    local best = CAI.Cover.FindBest(data, enemy, threatPos)
+    data.wantDarkCover = nil
+    if not best then return nil end
+    if CAI.CVBool("cai_performance_mode") then return best end
+
+    local bestScore = CornerScore(best) * mcfg.CornerBonus
+    for i = 0, 5 do
+        local a = math.rad(i * 60)
+        local cand = CAI.Nav.SafeOffset(best,
+            Vector(math.cos(a), math.sin(a), 0), mcfg.CornerRadius)
+        if cand and CAI.Nav.IsGroundSpot(cand)
+           and (not IsValid(enemy) or not CAI.Util.CanSeePos(enemy, cand)) then
+            local sc = CornerScore(cand) * mcfg.CornerBonus
+                     + (CAI.Cover.SpotShade(cand) or 0)
+            if sc > bestScore then best, bestScore = cand, sc end
+        end
+    end
+    return best
+end
+
 local function handler(data)
     local npc = data.ent
     local decision = data.lastDecision
+
+    if decision == "melee_chase" or decision == "melee_ambush" then
+        local mcfg = CAI.Config.Melee
+        local now = CurTime()
+        if now - (data.meleeThreatCheckAt or 0) > mcfg.ThreatRecheck then
+            data.meleeThreatCheckAt = now
+            local foe = BR.CombatTarget(data)
+            if IsValid(foe) and CAI.Util.CanSee(npc, foe) then
+                local tc = CAI.WeaponIntel.ThreatClass(foe)
+                local dist = npc:GetPos():Distance(foe:GetPos())
+                data.meleeThreatSeen = tc
+                if dist >= mcfg.GunPanicDist then
+                    if tc == "gun" and decision == "melee_chase" then
+                        data.meleePhase = nil
+                        data.moveTarget = nil
+                        data.lastDecision = "melee_ambush"
+                        decision = "melee_ambush"
+                    elseif tc ~= "gun" and decision == "melee_ambush" then
+                        data.ambush = nil
+                        data.lastDecision = "melee_chase"
+                        decision = "melee_chase"
+                    end
+                end
+            end
+        end
+    end
 
     if decision == "melee_chase" then
         local mcfg = CAI.Config.Melee
@@ -103,9 +177,7 @@ local function handler(data)
         if not data.ambush
            or now - data.ambush.since > acfg.MaxWait
            or threat:DistToSqr(data.ambush.threat) > acfg.RepickDist * acfg.RepickDist then
-            data.wantDarkCover = true
-            local spot = CAI.Cover.FindBest(data, me, threat)
-            data.wantDarkCover = nil
+            local spot = FindAmbushSpot(data, me, threat)
             if not spot then
                 data.lastDecision = "melee_chase"
                 decision = "melee_chase"
