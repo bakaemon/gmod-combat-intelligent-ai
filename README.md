@@ -42,6 +42,8 @@
 
 # V1.6.0 Releasing 8/30/2026 - My birthday!
 
+**You may use our code but you must credit us**
+
 **If you like the NPC in the images download it [here](https://steamcommunity.com/sharedfiles/filedetails/?id=1722540209)**
 
 ## Contributors
