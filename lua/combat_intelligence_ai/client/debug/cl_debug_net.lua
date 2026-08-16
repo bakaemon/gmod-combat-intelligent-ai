@@ -27,6 +27,7 @@ net.Receive(CAI.Net.Debug, function()
         r.memD   = net.ReadUInt(4)
         r.lod    = net.ReadFloat()
         r.traits = net.ReadString()
+        r.traitList = D.TraitList(r.traits)
         rows[#rows + 1] = r
     end
     D.Rows = rows
@@ -93,7 +94,7 @@ end)
 
 hook.Add("EntityRemoved", "CAI_DebugDeathMark", function(ent)
     if not D.Active() then return end
-    if not D.CV.deaths:GetBool() then return end
+    if not D.Opt.deaths then return end
     if not IsValid(ent) or not ent:IsNPC() then return end
 
     local ply = LocalPlayer()

@@ -7,7 +7,11 @@ local PAD_B = 8
 local BAR_GAP = 8
 local BAR_H = 4
 local MIN_W = 118
-local LINE_H = 15
+local CHIP_W = 210
+local CHIP_H = 15
+local CHIP_GAP = 4
+local CHIP_PAD = 6
+local DOT = 4
 
 local function Bar(x, y, w, h, frac, col, a)
     draw.RoundedBox(2, x, y, w, h, ColorAlpha(D.Col.barbg, 215 * a))
@@ -17,7 +21,56 @@ local function Bar(x, y, w, h, frac, col, a)
     end
 end
 
-local function DrawBadge(r, sp, a, detail)
+local function LayoutChips(traits)
+    surface.SetFont("CAI_DbgChip")
+
+    local rows = {}
+    local cur = {}
+    local curW = 0
+
+    for _, name in ipairs(traits) do
+        local info = D.TraitInfo(name)
+        local tw = surface.GetTextSize(info.tag)
+        local cw = CHIP_PAD + DOT + 5 + tw + CHIP_PAD
+
+        if #cur > 0 and curW + CHIP_GAP + cw > CHIP_W then
+            rows[#rows + 1] = { items = cur, w = curW }
+            cur, curW = {}, 0
+        end
+
+        curW = curW + (#cur > 0 and CHIP_GAP or 0) + cw
+        cur[#cur + 1] = { info = info, w = cw }
+    end
+
+    if #cur > 0 then
+        rows[#rows + 1] = { items = cur, w = curW }
+    end
+
+    local widest = 0
+    for _, row in ipairs(rows) do
+        widest = math.max(widest, row.w)
+    end
+    return rows, widest
+end
+
+local function DrawChips(rows, x, y, innerW, a)
+    for _, row in ipairs(rows) do
+        local cx = x + math.floor((innerW - row.w) * 0.5)
+        for _, chip in ipairs(row.items) do
+            local col = chip.info.col
+            draw.RoundedBox(4, cx, y, chip.w, CHIP_H, ColorAlpha(col, 46 * a))
+            draw.RoundedBox(4, cx, y, 2, CHIP_H, ColorAlpha(col, 200 * a))
+            draw.RoundedBox(2, cx + CHIP_PAD, y + math.floor((CHIP_H - DOT) * 0.5), DOT, DOT,
+                ColorAlpha(col, 255 * a))
+            draw.SimpleText(chip.info.tag, "CAI_DbgChip", cx + CHIP_PAD + DOT + 5, y + CHIP_H * 0.5 - 1,
+                ColorAlpha(col, 255 * a), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            cx = cx + chip.w + CHIP_GAP
+        end
+        y = y + CHIP_H + 3
+    end
+end
+
+local function DrawBadge(r, sp, a, showTraits)
     local disp = D.Disp[r.idx]
     local morale = disp and disp.morale or r.morale
     local supp = disp and disp.supp or r.supp
@@ -36,12 +89,22 @@ local function DrawBadge(r, sp, a, detail)
     surface.SetFont("CAI_DbgPhase")
     local phaseW, phaseH = surface.GetTextSize(phaseText)
 
+    local chipRows, chipW = nil, 0
+    local traits = r.traitList or {}
+    if showTraits and #traits > 0 then
+        chipRows, chipW = LayoutChips(traits)
+    end
+
     local topH = math.max(idH, roleH)
     local topW = idW + 14 + roleW
-    local innerW = math.max(topW, phaseW, MIN_W)
+    local innerW = math.max(topW, phaseW, chipW, MIN_W)
 
     local w = innerW + PAD_L + PAD_R
     local h = PAD_T + topH + 3 + phaseH + 6 + BAR_H + PAD_B
+
+    if chipRows then
+        h = h + 5 + #chipRows * (CHIP_H + 3) - 3 + 2
+    end
 
     local x = math.Round(sp.x - w * 0.5)
     local y = math.Round(sp.y)
@@ -76,31 +139,24 @@ local function DrawBadge(r, sp, a, detail)
     Bar(cx, cy, barW, BAR_H, morale / 100, moraleCol, a)
     Bar(cx + barW + BAR_GAP, cy, innerW - barW - BAR_GAP, BAR_H, supp / 100, D.Col.supp, a)
 
-    if not detail then return end
+    cy = cy + BAR_H
 
-    local lines = {
-        { "squad " .. r.squad .. "   " .. ((r.plan ~= "" and r.plan) or "-"), squadCol },
-        { D.WhyName(r.why), D.Col.dim },
-        { "mem " .. r.memE .. "/" .. r.memD .. "   lod " .. string.format("%.2f", r.lod), D.Col.dim },
-        { (r.traits ~= "" and r.traits) or "-", D.Col.traits },
-    }
-
-    local dy = y + h + 4
-    for i, l in ipairs(lines) do
-        draw.SimpleText(l[1], "CAI_DbgLine", sp.x, dy + (i - 1) * LINE_H,
-            ColorAlpha(l[2], 235 * a), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+    if chipRows then
+        surface.SetDrawColor(ColorAlpha(D.Col.line, 130 * a))
+        surface.DrawRect(cx, cy + 4, innerW, 1)
+        DrawChips(chipRows, cx, cy + 9, innerW, a)
     end
 end
 
 hook.Add("HUDPaint", "CAI_DebugBadges", function()
     if not D.Fresh() then return end
-    if D.CV.cinema:GetBool() then return end
-    if not D.CV.badges:GetBool() then return end
+    if D.Opt.cinema then return end
+    if not D.Opt.badges then return end
 
-    local list, hidden = D.Sorted(D.CV.maxdraw:GetInt())
+    local list, hidden = D.Sorted(D.Opt.maxdraw)
     D.Hidden = hidden
 
-    local detail = D.CV.detail:GetBool()
+    local showTraits = D.Opt.traits
 
     for _, r in ipairs(list) do
         local npc = r.ent
@@ -111,7 +167,7 @@ hook.Add("HUDPaint", "CAI_DebugBadges", function()
                 local a = D.Alpha(r.dist)
                 if D.Occluded(head) then a = a * 0.32 end
                 if a > 0.02 then
-                    DrawBadge(r, sp, a, detail)
+                    DrawBadge(r, sp, a, showTraits)
                 end
             end
         end
