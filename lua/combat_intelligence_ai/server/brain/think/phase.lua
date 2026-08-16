@@ -72,10 +72,123 @@ function BR.SetPhase(data, newPhase, intent, reason, overrideCommitment)
     CAI.FireAim.ClearEnemy(data)
 end
 
+local RELOAD_TIMEOUT = 4
+local RELOAD_FAIL_LIMIT = 3
+local RELOAD_MIN_GAP = 2
+local RELOAD_BACKOFF = 8
+
+local RELOAD_ACTS = {}
+for _, act in ipairs({ ACT_RELOAD, ACT_RELOAD_LOW, ACT_RELOAD_PISTOL, ACT_RELOAD_PISTOL_LOW,
+    ACT_RELOAD_SMG1, ACT_RELOAD_SMG1_LOW, ACT_RELOAD_SHOTGUN, ACT_RELOAD_SHOTGUN_LOW }) do
+    RELOAD_ACTS[act] = true
+end
+
+function CAI.ReloadClip(npc)
+    local wep = npc.GetActiveWeapon and npc:GetActiveWeapon()
+    if not IsValid(wep) or not wep.Clip1 then return nil, nil end
+    local maxClip = wep.GetMaxClip1 and wep:GetMaxClip1() or -1
+    return wep:Clip1(), maxClip
+end
+
+local FIRE_SCHEDS = {}
+for _, sched in ipairs({ SCHED_ESTABLISH_LINE_OF_FIRE, SCHED_RANGE_ATTACK1 }) do
+    FIRE_SCHEDS[sched] = true
+end
+
+function CAI.IsDry(data)
+    local npc = data.ent
+    if not IsValid(npc) then return false end
+    if data._dryAt == CurTime() then return data._dry end
+
+    local dry = false
+    if not CAI.WeaponIntel.IsMelee(npc) then
+        local clip, maxClip = CAI.ReloadClip(npc)
+        dry = clip ~= nil and maxClip ~= nil and maxClip > 0 and clip <= 0
+    end
+
+    data._dryAt = CurTime()
+    data._dry = dry
+    return dry
+end
+
+function CAI.Reloading(data)
+    local npc = data.ent
+    if not IsValid(npc) then return false end
+
+    if data._reloadIssuedAt then
+        local clip = CAI.ReloadClip(npc)
+        if clip and clip > (data._reloadClip or 0) then
+            data._reloadIssuedAt = nil
+            data._reloadFails = 0
+        elseif CurTime() - data._reloadIssuedAt < RELOAD_TIMEOUT then
+            return true
+        end
+    end
+
+    if npc.IsCurrentSchedule then
+        if npc:IsCurrentSchedule(SCHED_RELOAD) then return true end
+        if SCHED_HIDE_AND_RELOAD and npc:IsCurrentSchedule(SCHED_HIDE_AND_RELOAD) then return true end
+    end
+
+    local act = npc.GetActivity and npc:GetActivity()
+    if act and RELOAD_ACTS[act] then return true end
+
+    return false
+end
+
+function CAI.TryReload(data, hide)
+    local npc = data.ent
+    if not IsValid(npc) then return false end
+
+    local wep = npc.GetActiveWeapon and npc:GetActiveWeapon()
+    if not IsValid(wep) then return false end
+
+    if data._reloadWep ~= wep then
+        data._reloadWep = wep
+        data._reloadIssuedAt = nil
+        data._reloadClip = nil
+        data._reloadFails = 0
+        data._reloadBlockUntil = nil
+        data._reloadLastAt = nil
+    end
+
+    local clip, maxClip = CAI.ReloadClip(npc)
+    if not clip or clip < 0 then return false end
+    if not maxClip or maxClip <= 0 then return false end
+    if clip >= maxClip then return false end
+
+    if CurTime() < (data._reloadBlockUntil or 0) then return false end
+    if CurTime() - (data._reloadLastAt or -RELOAD_MIN_GAP) < RELOAD_MIN_GAP then return false end
+    if CAI.Reloading(data) then return false end
+
+    if data._reloadIssuedAt and clip <= (data._reloadClip or 0) then
+        data._reloadFails = (data._reloadFails or 0) + 1
+        if data._reloadFails >= RELOAD_FAIL_LIMIT then
+            data._reloadFails = 0
+            data._reloadIssuedAt = nil
+            data._reloadBlockUntil = CurTime() + RELOAD_BACKOFF
+            return false
+        end
+    end
+
+    data._reloadClip = clip
+    data._reloadIssuedAt = CurTime()
+    data._reloadLastAt = CurTime()
+    data._reloadingAt = CurTime()
+
+    if hide and SCHED_HIDE_AND_RELOAD then
+        npc:SetSchedule(SCHED_HIDE_AND_RELOAD)
+    else
+        npc:SetSchedule(SCHED_RELOAD)
+    end
+    return true
+end
+
 -- Targeted schedule throttle: only blocks re-issuing the same schedule within
 -- SchedCooldown, and protects mid-reload from interruption.
 function CAI.Schedule(data, sched)
     local npc = data.ent
+    if FIRE_SCHEDS[sched] and CAI.IsDry(data) then return end
     if sched ~= SCHED_RELOAD and data._schedAt and data._lastSched
         and sched == data._lastSched
         and CurTime() - data._schedAt < CAI.Config.Engage.SchedCooldown then

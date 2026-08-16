@@ -103,11 +103,8 @@ local function handler(data)
         do
             local wep = npc:GetActiveWeapon()
             if IsValid(wep) and wep.Clip1 and wep:Clip1() > 0 and wep:Clip1() < (wep.GetMaxClip1 and wep:GetMaxClip1() or wep:Clip1()) * 0.3 then
-                local reloading = npc.IsCurrentSchedule and npc:IsCurrentSchedule(SCHED_RELOAD)
-                if not reloading and CurTime() > (data._tacticalReloadAt or 0) then
-                    data._tacticalReloadAt = CurTime() + 2.0
-                    data._reloadingAt = CurTime()
-                    npc:SetSchedule(SCHED_RELOAD)
+                if CurTime() > (data._tacticalReloadAt or 0) and CAI.TryReload(data) then
+                    data._tacticalReloadAt = CurTime() + 3.0
                 end
             end
         end
@@ -372,11 +369,8 @@ local function handler(data)
     do
         local wep = npc:GetActiveWeapon()
         if IsValid(wep) and wep.Clip1 and wep:Clip1() > 0 and wep:Clip1() < (wep.GetMaxClip1 and wep:GetMaxClip1() or wep:Clip1()) * 0.3 then
-            local reloading = npc.IsCurrentSchedule and npc:IsCurrentSchedule(SCHED_RELOAD)
-            if not reloading and CurTime() > (data._tacticalReloadAt or 0) then
-                data._tacticalReloadAt = CurTime() + 2.0
-                data._reloadingAt = CurTime()
-                npc:SetSchedule(SCHED_RELOAD)
+            if CurTime() > (data._tacticalReloadAt or 0) and CAI.TryReload(data) then
+                data._tacticalReloadAt = CurTime() + 3.0
             end
         end
     end
