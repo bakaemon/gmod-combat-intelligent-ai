@@ -100,14 +100,7 @@ local function handler(data)
             data.suppressUntil = nil
             data.planPending = "suppress_done"
         end
-        do
-            local wep = npc:GetActiveWeapon()
-            if IsValid(wep) and wep.Clip1 and wep:Clip1() > 0 and wep:Clip1() < (wep.GetMaxClip1 and wep:GetMaxClip1() or wep:Clip1()) * 0.3 then
-                if CurTime() > (data._tacticalReloadAt or 0) and CAI.TryReload(data) then
-                    data._tacticalReloadAt = CurTime() + 3.0
-                end
-            end
-        end
+        CAI.TryReload(data, false, 0.3)
         return
     end
 
@@ -366,14 +359,7 @@ local function handler(data)
         return
     end
 
-    do
-        local wep = npc:GetActiveWeapon()
-        if IsValid(wep) and wep.Clip1 and wep:Clip1() > 0 and wep:Clip1() < (wep.GetMaxClip1 and wep:GetMaxClip1() or wep:Clip1()) * 0.3 then
-            if CurTime() > (data._tacticalReloadAt or 0) and CAI.TryReload(data) then
-                data._tacticalReloadAt = CurTime() + 3.0
-            end
-        end
-    end
+    CAI.TryReload(data, false, 0.3)
 
     if dist < CAI.Config.Engage.PointBlank * 2 and CAI.Util.Sees(npc, enemy)
         and now - (data.backoffAt or 0) > 2 then

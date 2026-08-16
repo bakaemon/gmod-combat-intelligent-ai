@@ -12,10 +12,7 @@ BR.RegisterHook("brain/react", "ranged_empty_reload", function(data, dt)
     local enemy = npc.GetEnemy and npc:GetEnemy()
     local threatened = IsValid(enemy)
 
-    if threatened and data.phase ~= CAI.PHASE.WITHDRAW and CurTime() - (data._dryPhaseAt or 0) > 1 then
-        data._dryPhaseAt = CurTime()
+    if CAI.TryReload(data, threatened) and threatened and data.phase ~= CAI.PHASE.WITHDRAW then
         BR.SetPhase(data, CAI.PHASE.COVER, "reloading", "dry_reload", true)
     end
-
-    CAI.TryReload(data, threatened)
 end)
