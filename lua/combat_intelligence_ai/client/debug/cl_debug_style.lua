@@ -1,25 +1,22 @@
 CAI.DebugUI = CAI.DebugUI or {}
 local D = CAI.DebugUI
 
-local function CV(name, default, help)
-    return CreateClientConVar(name, default, true, false, help)
-end
-
-D.CV = {
-    badges  = CV("cai_debug_badges", "1", "Draw the status badge above each NPC"),
-    detail  = CV("cai_debug_detail", "0", "Expand every badge into the full text"),
-    links   = CV("cai_debug_links", "1", "Draw squad bond links on the ground"),
-    deaths  = CV("cai_debug_deaths", "1", "Leave a marker where an NPC died"),
-    cinema  = CV("cai_debug_cinematic", "0", "Hide all text and keep ONLY the world markers"),
-    xray    = CV("cai_debug_xray", "0", "Draw world markers through walls at max power"),
-    maxdraw = CV("cai_debug_maxbadges", "16", "Maximum badges drawn at once, 0 = No limit"),
-    fade    = CV("cai_debug_fadedist", "2400", "Distance at which the badges fadeout"),
+D.Opt = {
+    badges = true,
+    traits = true,
+    links = true,
+    deaths = true,
+    cinema = false,
+    xray = false,
+    maxdraw = 16,
+    fade = 2400,
 }
 
 surface.CreateFont("CAI_DbgTag",   { font = "Roboto", size = 13, weight = 800 })
 surface.CreateFont("CAI_DbgPhase", { font = "Roboto", size = 15, weight = 800 })
 surface.CreateFont("CAI_DbgSmall", { font = "Roboto", size = 11, weight = 500 })
 surface.CreateFont("CAI_DbgLine",  { font = "Roboto", size = 12, weight = 600 })
+surface.CreateFont("CAI_DbgChip",  { font = "Roboto", size = 11, weight = 800 })
 
 D.Phase = {
     [0] = Color(150, 195, 160),
@@ -56,7 +53,54 @@ D.Col = {
     target    = Color(240, 85, 85),
     death     = Color(235, 80, 80),
     traits    = Color(240, 195, 120),
+    line      = Color(64, 64, 74),
 }
+
+D.Trait = {
+    Aggressive = { tag = "AGGR", col = Color(238, 108, 72) },
+    Defensive  = { tag = "DEFN", col = Color(95, 165, 235) },
+    Patient    = { tag = "PATN", col = Color(90, 205, 195) },
+    Brave      = { tag = "BRVE", col = Color(245, 205, 90) },
+    Cowardly   = { tag = "COWD", col = Color(190, 140, 230) },
+    Calm       = { tag = "CALM", col = Color(140, 215, 175) },
+    Impulsive  = { tag = "IMPL", col = Color(240, 125, 180) },
+    Accurate   = { tag = "ACCU", col = Color(110, 200, 240) },
+    PoorShot   = { tag = "POOR", col = Color(160, 150, 145) },
+    Reckless   = { tag = "RECK", col = Color(250, 90, 60) },
+}
+
+local unknownTraits = {}
+
+function D.TraitInfo(name)
+    local known = D.Trait[name]
+    if known then return known end
+
+    local made = unknownTraits[name]
+    if not made then
+        local seed = 0
+        for i = 1, #name do
+            seed = seed + name:byte(i) * i
+        end
+        made = {
+            tag = string.upper(string.sub(name, 1, 4)),
+            col = HSVToColor((seed * 37) % 360, 0.45, 1),
+        }
+        unknownTraits[name] = made
+    end
+    return made
+end
+
+local splitCache = {}
+
+function D.TraitList(str)
+    if not str or str == "" then return {} end
+    local cached = splitCache[str]
+    if not cached then
+        cached = string.Explode("/", str)
+        splitCache[str] = cached
+    end
+    return cached
+end
 
 local squadCache = {}
 
@@ -108,7 +152,7 @@ function D.WorldEnabled()
 end
 
 function D.Alpha(dist)
-    local fade = D.CV.fade:GetFloat()
+    local fade = D.Opt.fade
     if fade <= 0 then return 1 end
     return math.Clamp(1 - (dist / fade), 0, 1)
 end
