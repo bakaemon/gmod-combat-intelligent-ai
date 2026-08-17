@@ -1,6 +1,6 @@
 CAI = CAI or {}
-CAI.Version = "0.1.4"
-CAI.Build = "2026-07-13"
+CAI.Version = "1.5.5"
+CAI.Build = "2026-08-17"
 CAI.PrintPrefix = "[Combat Intelligence AI] "
 
 local BASE = "combat_intelligence_ai/"
