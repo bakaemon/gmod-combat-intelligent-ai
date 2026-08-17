@@ -112,7 +112,9 @@ BR.RegisterHook("brain/exec", "withdraw", function(data)
                     local p = CAI.Nav.SafeOffset(npc:GetPos(), dir, ecfg.Step)
                     if p and safeRetreat(data, p, nearPos, curD) then dest = p break end
                 end
-                if dest and IsValid(navmesh.GetNearestNavArea(dest)) and not BR.IsCommitted(data) then CAI.Nav.MoveTo(data, dest, "run") end
+                if dest and IsValid(navmesh.GetNearestNavArea(dest)) and not BR.IsCommitted(data) then
+                    CAI.Nav.MoveTo(data, dest, "run", "escape")
+                end
                 if not data.saidRetreat then
                     data.saidRetreat = true
                     CAI.Voice.Speak(data, "retreat")
@@ -127,7 +129,9 @@ BR.RegisterHook("brain/exec", "withdraw", function(data)
             if away:LengthSqr() < 1 then away = Vector(1, 0, 0) end
             away:Normalize()
             local dest = CAI.Nav.SafeOffset(npc:GetPos(), away, 280)
-            if dest and IsValid(navmesh.GetNearestNavArea(dest)) and not BR.IsCommitted(data) then CAI.Nav.MoveTo(data, dest, "run") end
+            if dest and IsValid(navmesh.GetNearestNavArea(dest)) and not BR.IsCommitted(data) then
+                CAI.Nav.MoveTo(data, dest, "run", "scatter")
+            end
             return
         end
 
@@ -162,7 +166,9 @@ BR.RegisterHook("brain/exec", "withdraw", function(data)
                 away:Normalize()
                 dest = CAI.Nav.SafeOffset(npc:GetPos(), away, 700)
             end
-            if dest and IsValid(navmesh.GetNearestNavArea(dest)) and not BR.IsCommitted(data) then CAI.Nav.MoveTo(data, dest, "run") end
+            if dest and IsValid(navmesh.GetNearestNavArea(dest)) and not BR.IsCommitted(data) then
+                CAI.Nav.MoveTo(data, dest, "run", "hide")
+            end
             if not data.saidRetreat then
                 data.saidRetreat = true
                 CAI.Voice.Speak(data, "panic")
@@ -173,7 +179,7 @@ BR.RegisterHook("brain/exec", "withdraw", function(data)
         local cacheBad = data.retreatDest and CAI.CVBool("cai_danger_avoid")
             and CAI.Memory.AvoidPos(data, data.retreatDest,
                 CAI.Config.SelfPreserve.DangerAvoid.AdvanceIntoRadius)
-        if not data.retreatDest or CAI.Nav.Arrived(data, 100)
+        if not data.retreatDest or not CAI.Nav.HasGoal(data) or CAI.Nav.Arrived(data, 100)
            or CurTime() - (data.retreatAt or 0) > 5 or cacheBad then
             data.retreatAt = CurTime()
             local ent, rec = CAI.Memory.FreshestEnemy(data)
@@ -217,7 +223,7 @@ BR.RegisterHook("brain/exec", "withdraw", function(data)
                     data.retreatDest = dest
                     data.retreatMoveAt = CurTime()
                     if not BR.IsCommitted(data) then
-                        CAI.Nav.MoveTo(data, dest, "run")
+                        CAI.Nav.MoveTo(data, dest, "run", "retreat")
                     end
                 else
                     data.retreatDest = nil
@@ -229,21 +235,19 @@ BR.RegisterHook("brain/exec", "withdraw", function(data)
                 if data.squad then CAI.Squad.Broadcast(data.squad, "retreating", npc) end
             end
         end
-        -- Re-issue movement to existing retreat destination every 1s
         if data.retreatDest and CurTime() - (data.retreatMoveAt or 0) > 1 then
             data.retreatMoveAt = CurTime()
             if not BR.IsCommitted(data) then
-                CAI.Nav.MoveTo(data, data.retreatDest, "run")
+                CAI.Nav.MoveTo(data, data.retreatDest, "run", "retreat")
             end
         elseif nearPos then
-            -- Fallback: run away from nearest enemy
             local away = (npc:GetPos() - nearPos):GetNormalized() * 600
             local dest = CAI.Nav.SafeOffset(npc:GetPos(), away, 600)
             if dest and IsValid(navmesh.GetNearestNavArea(dest)) then
                 data.retreatDest = dest
                 data.retreatMoveAt = CurTime()
                 if not BR.IsCommitted(data) then
-                    CAI.Nav.MoveTo(data, dest, "run")
+                    CAI.Nav.MoveTo(data, dest, "run", "retreat")
                 end
             end
         end
@@ -270,7 +274,7 @@ BR.RegisterHook("brain/exec", "withdraw", function(data)
                 data.planPending = "reinforced"
                 return
             end
-            CAI.Nav.MoveTo(data, data.reinforceTarget, "run")
+            CAI.Nav.MoveTo(data, data.reinforceTarget, "run", "regroup")
             return
         end
 
@@ -282,11 +286,11 @@ BR.RegisterHook("brain/exec", "withdraw", function(data)
             end
         end
         local slot = CAI.Squad.FormationSlot(squad, idx)
-        if slot and CurTime() - (data.regroupAt or 0) > 1.5 then
+        if slot and (CurTime() - (data.regroupAt or 0) > 1.5 or not CAI.Nav.HasGoal(data)) then
             data.regroupAt = CurTime()
-            CAI.Nav.MoveTo(data, slot, "run")
+            CAI.Nav.MoveTo(data, slot, "run", "regroup")
         end
-        if data.moveTarget and CAI.Nav.Arrived(data, 90) then
+        if CAI.Nav.HasGoal(data) and CAI.Nav.Arrived(data, 90) then
             data.planPending = "in_formation"
         end
         return
