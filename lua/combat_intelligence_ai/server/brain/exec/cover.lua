@@ -109,16 +109,6 @@ BR.RegisterHook("brain/exec", "cover", function(data)
             end
         end
     end
-    do
-        local wep = npc:GetActiveWeapon()
-        if IsValid(wep) and wep.Clip1 and wep:Clip1() > 0 and wep:Clip1() < (wep.GetMaxClip1 and wep:GetMaxClip1() or wep:Clip1()) * 0.3 then
-            local reloading = npc.IsCurrentSchedule and npc:IsCurrentSchedule(SCHED_RELOAD)
-            if not reloading and CurTime() > (data._tacticalReloadAt or 0) then
-                data._tacticalReloadAt = CurTime() + 2.0
-                data._reloadingAt = CurTime()
-                npc:SetSchedule(SCHED_RELOAD)
-            end
-        end
-    end
+    CAI.TryReload(data, false, 0.3)
     CAI.FriendlyFire.Update(data)
 end)

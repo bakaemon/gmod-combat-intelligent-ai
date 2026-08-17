@@ -76,6 +76,7 @@ end
 -- SchedCooldown, and protects mid-reload from interruption.
 function CAI.Schedule(data, sched)
     local npc = data.ent
+    if CAI.IsFireSchedule(sched) and CAI.IsDry(data) then return end
     if sched ~= SCHED_RELOAD and data._schedAt and data._lastSched
         and sched == data._lastSched
         and CurTime() - data._schedAt < CAI.Config.Engage.SchedCooldown then
