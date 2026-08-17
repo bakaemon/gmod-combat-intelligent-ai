@@ -3,6 +3,7 @@ local ROOT = "combat_intelligence_ai/server/brain/think/"
 
 include(ROOT .. "perceive.lua")
 include(ROOT .. "sense.lua")
+include(ROOT .. "reload.lua")
 include(ROOT .. "phase.lua")
 
 function BR.Think(data, dt)
