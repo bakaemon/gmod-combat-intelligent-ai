@@ -146,6 +146,16 @@ local function handler(data)
         local dist = npc:GetPos():Distance(foe:GetPos())
         if now < (data.pbPhaseEnd or 0) then
             CAI.FriendlyFire.Update(data)
+            if data.pbPhase == "fire" then
+                local isFiring = npc.IsCurrentSchedule and (
+                    npc:IsCurrentSchedule(SCHED_RANGE_ATTACK1)
+                    or npc:IsCurrentSchedule(SCHED_RANGE_ATTACK2)
+                    or npc:IsCurrentSchedule(SCHED_ESTABLISH_LINE_OF_FIRE)
+                )
+                if not isFiring then
+                    npc:SetSchedule(SCHED_RANGE_ATTACK1)
+                end
+            end
             return
         end
         if data.pbPhase == "fire" and dist < pcfg.WithdrawDist then
@@ -351,8 +361,11 @@ local function handler(data)
             data.fireAngleOffset = data.fireAngleOffset * 0.5
             if math.abs(data.fireAngleOffset) < 1 then data.fireAngleOffset = nil end
         end
-        if not data.fighting or (not firing and CurTime() - (data.fightSchedAt or 0) > CAI.Config.Engage.RetryGap) then
+        if not data.fighting then
             data.fighting = true
+            data.fightSchedAt = CurTime()
+            CAI.Schedule(data, SCHED_ESTABLISH_LINE_OF_FIRE)
+        elseif not firing then
             data.fightSchedAt = CurTime()
             CAI.Schedule(data, SCHED_ESTABLISH_LINE_OF_FIRE)
         end
