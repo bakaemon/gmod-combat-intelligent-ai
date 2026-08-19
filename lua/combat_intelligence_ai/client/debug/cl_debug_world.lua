@@ -42,7 +42,7 @@ hook.Add("PostDrawTranslucentRenderables", "CAI_DebugWorld", function(_, skybox)
     if not D.Fresh() then return end
     if not D.WorldEnabled() then return end
 
-    local xray = D.CV.xray:GetBool()
+    local xray = D.Opt.xray
     if xray then cam.IgnoreZ(true) end
 
     local pulse = 0.5 + math.sin(CurTime() * 3.4) * 0.5
@@ -88,7 +88,7 @@ hook.Add("PostDrawTranslucentRenderables", "CAI_DebugWorld", function(_, skybox)
         end
     end
 
-    if D.CV.links:GetBool() then
+    if D.Opt.links then
         for id, s in pairs(squads) do
             if s.n > 1 then
                 local center = s.sum / s.n
@@ -102,7 +102,7 @@ hook.Add("PostDrawTranslucentRenderables", "CAI_DebugWorld", function(_, skybox)
         end
     end
 
-    if D.CV.deaths:GetBool() then
+    if D.Opt.deaths then
         local now = CurTime()
         for _, d in ipairs(D.Deaths) do
             local f = 1 - math.Clamp((now - d.t) / 30, 0, 1)
