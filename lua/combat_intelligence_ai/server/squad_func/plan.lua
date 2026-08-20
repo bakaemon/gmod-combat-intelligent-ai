@@ -183,7 +183,7 @@ function SF.Plan(squad)
                 local d = CAI.Manager.Get(m)
                 if d then
                     if cornerpush then d.cornerRole = "lead" end
-                    if not (d.boundTarget and not CAI.Nav.Arrived(d, 80)) then
+                    if not (d.boundTarget and CAI.Nav.HasGoal(d) and not CAI.Nav.Arrived(d, 80)) then
                         local enemy, rec = CAI.Memory.FreshestEnemy(d)
                         if rec then
                             local toEnemy = (rec.pos - d.ent:GetPos())
@@ -225,7 +225,6 @@ function SF.Plan(squad)
         end
     end
 
-    -- Set squad-level movement target
     if inCombat then
         local bestRec, bestT = nil, 0
         for _, m in ipairs(squad.members) do

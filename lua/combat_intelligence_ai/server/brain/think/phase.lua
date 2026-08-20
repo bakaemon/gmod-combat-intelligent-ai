@@ -3,6 +3,7 @@ local BR = CAI.Brain
 function BR.SetPhase(data, newPhase, intent, reason, overrideCommitment)
     if data.phase == newPhase and data.phaseIntent == intent then
         if reason then data.lastDecision = reason end
+        if CAI.Nav.HasGoal(data) then CAI.Nav.Claim(data, intent) end
         return
     end
 
@@ -54,8 +55,6 @@ function BR.SetPhase(data, newPhase, intent, reason, overrideCommitment)
     data.retreatDest = nil
     data.ambush = nil
     data.meleePhase = nil
-    data.moveTarget = nil
-    data.moveIssuedAt = nil
     data.patrolTarget = nil
     data._pushCover = nil
     data._pushCoverPhase = nil
@@ -66,14 +65,14 @@ function BR.SetPhase(data, newPhase, intent, reason, overrideCommitment)
         data.cover = nil
     end
 
+    CAI.Nav.Orphan(data)
+
     data.planPending = nil
 
     if data.reflex then data.reflex.urgency = nil end
     CAI.FireAim.ClearEnemy(data)
 end
 
--- Targeted schedule throttle: only blocks re-issuing the same schedule within
--- SchedCooldown, and protects mid-reload from interruption.
 function CAI.Schedule(data, sched)
     local npc = data.ent
     if CAI.IsFireSchedule(sched) and CAI.IsDry(data) then return end
@@ -121,11 +120,6 @@ function BR.Prefire(data, pos)
     local aim = pos + Vector(0, 0, 40)
     CAI.FireAim.Aim(data, aim, 1.2)
 end
-
--- Think: one brain tick for a single NPC. Tick order:
---   perceive -> fade memory -> decay suppression -> regen morale/proficiency
---   -> reflex -> OODA (decide) -> FireAim.Tick (auto-cleanup) -> exec (ExecPhase[phase]).
--- Light-touch NPCs (e.g. hunters) only perceive + fade, skipping decisions.
 
 local C = CAI.Config
 

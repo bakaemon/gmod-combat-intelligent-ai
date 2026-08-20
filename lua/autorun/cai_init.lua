@@ -1,6 +1,6 @@
 CAI = CAI or {}
-CAI.Version = "0.1.4"
-CAI.Build = "2026-07-13"
+CAI.Version = "1.5.5"
+CAI.Build = "2026-08-17"
 CAI.PrintPrefix = "[Combat Intelligence AI] "
 
 local BASE = "combat_intelligence_ai/"
@@ -46,6 +46,7 @@ Server("server/combat/sv_voice.lua")
 Server("server/combat/sv_friendlyfire.lua")
 Server("server/sv_squad.lua")
 Server("server/brain.lua")
+Server("server/movement/sv_movegoal.lua")
 Server("server/sv_fireaim.lua")
 Server("server/sv_manager.lua")
 

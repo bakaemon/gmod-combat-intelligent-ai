@@ -72,7 +72,7 @@ local function FlankBegin(data, enemyPos)
     local waypoint, attackPos = ComputeRoute(data, enemyPos)
     if not waypoint then return false end
     data.flank = { waypoint = waypoint, attackPos = attackPos, stage = 1, started = CurTime() }
-    CAI.Nav.MoveTo(data, waypoint, "run")
+    CAI.Nav.MoveTo(data, waypoint, "run", "flank")
     CAI.Voice.Speak(data, "flanking")
     if data.squad then CAI.Squad.Broadcast(data.squad, "flanking", data.ent, { pos = enemyPos }) end
     return true
@@ -83,14 +83,22 @@ local function FlankUpdate(data)
     if not fl then return false end
     if CurTime() - fl.started > 25 then data.flank = nil return false end
     if fl.stage == 1 then
-        if CAI.Nav.Arrived(data, 90) then
+        if not CAI.Nav.HasGoal(data) then
+            CAI.Nav.MoveTo(data, fl.waypoint, "run", "flank")
+        elseif CAI.Nav.Arrived(data, 90) then
             fl.stage = 2
-            CAI.Nav.MoveTo(data, fl.attackPos, "run")
+            CAI.Nav.MoveTo(data, fl.attackPos, "run", "flank")
+        else
+            CAI.Nav.Claim(data, "flank")
         end
     elseif fl.stage == 2 then
-        if CAI.Nav.Arrived(data, 120) then
+        if not CAI.Nav.HasGoal(data) then
+            CAI.Nav.MoveTo(data, fl.attackPos, "run", "flank")
+        elseif CAI.Nav.Arrived(data, 120) then
             data.flank = nil
             return false
+        else
+            CAI.Nav.Claim(data, "flank")
         end
     end
     return true
@@ -158,8 +166,12 @@ BR.RegisterHook("brain/exec", "maneuver", function(data)
             data.planPending = "no_bound_target"
             return
         end
-        local moving = data.moveTarget ~= nil and not CAI.Nav.Arrived(data, 70)
+        if not data.boundArrived and not CAI.Nav.HasGoal(data) then
+            CAI.Nav.MoveTo(data, data.boundTarget, "run", "bound")
+        end
+        local moving = CAI.Nav.HasGoal(data) and not CAI.Nav.Arrived(data, 70)
         if moving then
+            CAI.Nav.Claim(data, "bound")
             CAI.FriendlyFire.Update(data)
             return
         end
@@ -207,18 +219,32 @@ BR.RegisterHook("brain/exec", "maneuver", function(data)
             data.clearPhase = "approach"
             data.clearAngle = 0
             data.clearSliceStart = nil
-            local doorDir = (door.pos - npc:GetPos()):GetNormalized()
-            doorDir.z = 0
+            data.clearPhaseAt = CurTime()
             local approachPos = door.pos - door.normal * 60
             local safeApproach = CAI.Nav.SafeGround(approachPos) or approachPos
-            CAI.Nav.MoveTo(data, safeApproach, "run")
+            data.clearDest = safeApproach
+            CAI.Nav.MoveTo(data, safeApproach, "run", "room_clear")
         end
         if data.clearPhase == "approach" then
+            if CurTime() - (data.clearPhaseAt or 0) > 15 then
+                data.clearPhase = nil
+                data.clearDest = nil
+                door.done = true
+                data.planPending = "approach_timeout"
+                return
+            end
+            if not CAI.Nav.HasGoal(data) and data.clearDest then
+                CAI.Nav.MoveTo(data, data.clearDest, "run", "room_clear")
+                return
+            end
+            CAI.Nav.Claim(data, "room_clear")
             if CAI.Nav.Arrived(data, 80) then
                 data.clearPhase = "slice"
+                data.clearPhaseAt = CurTime()
                 data.clearSliceStart = CurTime()
                 data.clearAngle = -CAI.Config.SquadTactics.ClearSliceMax
-                data.moveTarget = nil
+                data.clearDest = nil
+                CAI.Nav.ClearGoal(data)
                 npc:SetSchedule(SCHED_COMBAT_FACE)
             end
             return
@@ -254,6 +280,7 @@ BR.RegisterHook("brain/exec", "maneuver", function(data)
             end
             if enemyDetected then
                 data.clearPhase = nil
+                data.clearDest = nil
                 door.done = true
                 data.planPending = "enemy_in_room"
                 return
@@ -261,21 +288,37 @@ BR.RegisterHook("brain/exec", "maneuver", function(data)
             data.clearAngle = sliceAngle + cfg.ClearSliceAngle
             if data.clearAngle > cfg.ClearSliceMax then
                 data.clearPhase = "entry"
+                data.clearPhaseAt = CurTime()
                 local entryDest = door.pos + door.normal * 150
                 local farCorner = entryDest + Vector(-door.normal.y, door.normal.x, 0) * 100
                 local safeEntry = CAI.Nav.SafeGround(farCorner) or CAI.Nav.SafeGround(entryDest) or entryDest
-                CAI.Nav.MoveTo(data, safeEntry, "run")
+                data.clearDest = safeEntry
+                CAI.Nav.MoveTo(data, safeEntry, "run", "room_clear")
             end
             if CurTime() - (data.clearSliceStart or 0) > 8 then
                 data.clearPhase = nil
+                data.clearDest = nil
                 door.done = true
                 data.planPending = "clear_timeout"
             end
             return
         end
         if data.clearPhase == "entry" then
+            if CurTime() - (data.clearPhaseAt or 0) > 15 then
+                data.clearPhase = nil
+                data.clearDest = nil
+                door.done = true
+                data.planPending = "entry_timeout"
+                return
+            end
+            if not CAI.Nav.HasGoal(data) and data.clearDest then
+                CAI.Nav.MoveTo(data, data.clearDest, "run", "room_clear")
+                return
+            end
+            CAI.Nav.Claim(data, "room_clear")
             if CAI.Nav.Arrived(data, 80) then
                 data.clearPhase = nil
+                data.clearDest = nil
                 door.done = true
                 CAI.Voice.Speak(data, "clear")
                 if data.squad then
@@ -286,13 +329,14 @@ BR.RegisterHook("brain/exec", "maneuver", function(data)
             return
         end
         data.clearPhase = nil
+        data.clearDest = nil
         door.done = true
         data.planPending = "clear_error"
         return
     end
 
     if data.phaseIntent == "reposition" then
-        if not data.moveTarget then
+        if not CAI.Nav.HasGoal(data) then
             data.planPending = "reposition_done"
             return
         end
@@ -300,6 +344,7 @@ BR.RegisterHook("brain/exec", "maneuver", function(data)
             data.planPending = "reposition_done"
             return
         end
+        CAI.Nav.Claim(data, "reposition")
         CAI.FriendlyFire.Update(data)
     end
 end)
