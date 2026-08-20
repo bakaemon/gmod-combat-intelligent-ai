@@ -4,7 +4,9 @@ local C = CAI.Config
 
 local spotCache = {}
 local propSpotCache = {}
+local propSpotCount = 0
 local shadeCache = {}
+local shadeCacheSize = 0
 function CV.SpotShade(pos)
     local key = math.floor(pos.x / 64) .. ":" .. math.floor(pos.y / 64) .. ":" .. math.floor(pos.z / 64)
     local c = shadeCache[key]
@@ -15,6 +17,18 @@ function CV.SpotShade(pos)
         mask = MASK_SOLID_BRUSHONLY,
     })
     local v = (tr.Hit and not tr.HitSky) and 1 or 0
+    if not c then
+        shadeCacheSize = shadeCacheSize + 1
+        if shadeCacheSize > 256 then
+            local now = CurTime()
+            for k, e in pairs(shadeCache) do
+                if now - e.t >= 20 then
+                    shadeCache[k] = nil
+                    shadeCacheSize = shadeCacheSize - 1
+                end
+            end
+        end
+    end
     shadeCache[key] = { v = v, t = CurTime() }
     return v
 end
@@ -68,7 +82,11 @@ local function GatherSpots(origin, enemy, enemyPos)
                 end
             end
         end
-        if table.Count(propSpotCache) > 128 then propSpotCache = {} end
+        if propSpotCount > 128 then
+            propSpotCache = {}
+            propSpotCount = 0
+        end
+        if not pc then propSpotCount = propSpotCount + 1 end
         propSpotCache[pkey] = { spots = pspots, t = CurTime() }
         for _, sp in ipairs(pspots) do out[#out + 1] = sp end
     end
@@ -256,7 +274,7 @@ function CV.UpdateCoverStatus(data, enemy)
         data.cover.exposedSince = data.cover.exposedSince or CurTime()
         if CurTime() - data.cover.exposedSince > cfg.CompromiseTime then
 
-            CAI.Battlefield.MarkCover(data.squad, data.cover.pos, false)
+            CAI.Battlefield.MarkCover(data.squad, data.cover.pos, false, enemy:GetPos())
             CAI.Memory.AddDanger(data, data.cover.pos, 150, "compromised_cover")
             data.cover = nil
             data.forceRecover = true
@@ -301,6 +319,7 @@ function CV.QueryNearby(data, origin, radius, opts)
     local cx, cy = math.floor(origin.x / cellSize), math.floor(origin.y / cellSize)
     local best, bestScore = nil, math.huge
     local enemy = data.ent:GetEnemy()
+    local enemyPos = IsValid(enemy) and enemy:GetPos() or nil
     for dx = -cellR, cellR do
         for dy = -cellR, cellR do
             local key = (cx + dx) .. ":" .. (cy + dy)
@@ -309,12 +328,22 @@ function CV.QueryNearby(data, origin, radius, opts)
                 for _, e in ipairs(entries) do
                     local dist = e.pos:DistToSqr(origin)
                     if dist < radius * radius then
-local heatKey = math.floor(e.pos.x / cellSize) .. ":" .. math.floor(e.pos.y / cellSize)
-                    local h = sm.heatmap[heatKey]
-                    local cellTemp = h and h.temp or C.Heatmap.Baseline
-                    if cellTemp < CAI.Config.Heatmap.DangerThreshold then
+                        local heatKey = math.floor(e.pos.x / cellSize) .. ":" .. math.floor(e.pos.y / cellSize)
+                        local h = sm.heatmap[heatKey]
+                        local cellTemp = h and h.temp or C.Heatmap.Baseline
+                        if cellTemp < CAI.Config.Heatmap.DangerThreshold then
                             local score = dist
                             if e.weight > 0 then score = score * (1 + e.weight * 0.5) end
+                            if cellTemp > C.Heatmap.Baseline then
+                                score = score * (1 + (cellTemp - C.Heatmap.Baseline) / C.Heatmap.Baseline)
+                            end
+                            if enemyPos then
+                                local dir = enemyPos - e.pos
+                                dir.z = 0
+                                if CAI.SpatialMap.QueryExposed(squad, e.pos, dir) < 0.3 then
+                                    score = score * 0.7
+                                end
+                            end
                             if score < bestScore then best, bestScore = e.pos, score end
                         end
                     end
@@ -322,9 +351,9 @@ local heatKey = math.floor(e.pos.x / cellSize) .. ":" .. math.floor(e.pos.y / ce
             end
         end
     end
-    if best and IsValid(enemy) then
+    if best and enemyPos then
         local tr = util.TraceLine({
-            start = enemy:GetPos() + Vector(0, 0, 36),
+            start = enemyPos + Vector(0, 0, 36),
             endpos = best + Vector(0, 0, 40),
             mask = MASK_SHOT,
             filter = { data.ent, enemy },

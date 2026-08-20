@@ -59,7 +59,7 @@ function B.ReportDanger(squad, pos, radius, reason)
     end
 end
 
-function B.MarkCover(squad, pos, success)
+function B.MarkCover(squad, pos, success, threatSrc)
     if not squad then return end
     local key = posKey(pos)
     local map = success and squad.blackboard.goodCover or squad.blackboard.badCover
@@ -67,7 +67,7 @@ function B.MarkCover(squad, pos, success)
     if success then
         CAI.SpatialMap.RecordTemp(squad, pos, -C.Heatmap.PatrolDecrement)
     else
-        CAI.SpatialMap.RecordTemp(squad, pos, C.Heatmap.HeatIncrement)
+        CAI.SpatialMap.RecordTemp(squad, pos, C.Heatmap.HeatIncrement, nil, threatSrc)
     end
 end
 

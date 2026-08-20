@@ -200,13 +200,15 @@ BR.RegisterHook("brain/exec", "withdraw", function(data)
                         if p and safeRetreat(data, p, nearPos, curD) then
                             local temp = CAI.SpatialMap.QueryTemp(data.squad, p)
                             local coldness = heatCfg.Baseline - temp
+                            local safeDir = CAI.SpatialMap.QuerySafeDir(data.squad, p, dir)
+                            local score = coldness + (safeDir:Dot(dir) * 2.0)
                             if not exposedToEnemies(data, p) then
-                                if coldness >= bestUnseenScore then
-                                    bestUnseenScore = coldness
+                                if score >= bestUnseenScore then
+                                    bestUnseenScore = score
                                     unseen = p
                                 end
-                            elseif coldness >= bestFallbackScore then
-                                bestFallbackScore = coldness
+                            elseif score >= bestFallbackScore then
+                                bestFallbackScore = score
                                 fallback = p
                             end
                         end

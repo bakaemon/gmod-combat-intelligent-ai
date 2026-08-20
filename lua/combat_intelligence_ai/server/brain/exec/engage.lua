@@ -1,4 +1,7 @@
 local ROOT = "combat_intelligence_ai/server/brain/exec/engage/"
+include(ROOT .. "engage_core.lua")
+include(ROOT .. "ranged_core.lua")
+include(ROOT .. "melee_core.lua")
 include(ROOT .. "ranged.lua")
 include(ROOT .. "melee.lua")
 include(ROOT .. "shotgun.lua")

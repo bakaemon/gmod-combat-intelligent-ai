@@ -17,11 +17,13 @@ BR.RegisterHook("brain/react", "ranged_suppression_jink", function(data, dt)
         local away = src - enemyPos
         away.z = 0
         if away:LengthSqr() > 1 then
+            away:Normalize()
+            local jinkDir = CAI.SpatialMap.QuerySafeDir(data.squad, src, away)
             if not BR.IsCommitted(data) then
-                local dest = src + away:GetNormalized() * 200
+                local dest = src + jinkDir * 200
                 biasVec = CAI.Nav.ReflexMove(data, dest)
             else
-                biasVec = away:GetNormalized() * 200
+                biasVec = jinkDir * 200
             end
         end
     end

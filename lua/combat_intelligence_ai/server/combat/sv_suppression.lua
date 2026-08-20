@@ -1,7 +1,7 @@
 CAI.Suppression = CAI.Suppression or {}
 local S = CAI.Suppression
 
-function S.Add(data, amount)
+function S.Add(data, amount, threatSrc)
     if not CAI.CVBool("cai_suppression") then return end
     local resist = 1 - math.Clamp(data.personality.stats.suppResist or 0, 0, 0.6)
 
@@ -13,7 +13,7 @@ function S.Add(data, amount)
         local atCover = data.cover and data.cover.pos
             and data.ent:GetPos():DistToSqr(data.cover.pos) < 6400
         if not atCover then
-            CAI.SpatialMap.RecordTemp(data.squad, data.ent:GetPos(), CAI.Config.Heatmap.HeatIncrement)
+            CAI.SpatialMap.RecordTemp(data.squad, data.ent:GetPos(), CAI.Config.Heatmap.HeatIncrement, nil, threatSrc)
         end
     end
 
@@ -109,7 +109,7 @@ local function ProcessShot(shot)
             if npc:GetPos():DistToSqr(src) < 3000 * 3000 then
                 local d = CAI.Util.PointSegmentDist(npc:GetPos() + Vector(0,0,40), src, dst)
                 if d < cfg.Radius then
-                    S.Add(data, cfg.PerBullet * (1 - d / cfg.Radius))
+                    S.Add(data, cfg.PerBullet * (1 - d / cfg.Radius), src)
 
                     CAI.Memory.HearEnemy(data, shooter, shooter:GetPos())
                 end

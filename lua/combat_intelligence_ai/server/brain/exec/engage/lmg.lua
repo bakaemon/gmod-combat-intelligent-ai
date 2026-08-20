@@ -1,7 +1,5 @@
 local BR = CAI.Brain
 
-local function handler(data)
-    -- LMG-specific engage overrides (empty stub — falls through to ranged generic)
-end
-
-BR.RegisterHook("brain/exec/engage", "lmg", handler)
+BR.RegisterHook("brain/exec/engage", "lmg", function(data)
+    BR.Exec.Engage.Ranged.Run(data)
+end)

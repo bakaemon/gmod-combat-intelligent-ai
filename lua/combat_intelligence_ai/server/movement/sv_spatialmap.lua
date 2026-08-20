@@ -3,6 +3,29 @@ local SM = CAI.SpatialMap
 local B = CAI.Battlefield
 local CV = CAI.Cover
 
+local DIR_NAMES = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" }
+
+local function CompassBin(dir)
+    local deg = math.atan2(dir.y, dir.x) * 180 / math.pi
+    return math.floor((deg + 22.5) / 45) % 8 + 1
+end
+
+local function CellCenter(cx, cy, cellSize)
+    return Vector((cx + 0.5) * cellSize, (cy + 0.5) * cellSize, 0)
+end
+
+local function NewHeatCell(baseline)
+    return { temp = baseline, updatedAt = 0, lastDangerAt = 0, N = 0, NE = 0, E = 0, SE = 0, S = 0, SW = 0, W = 0, NW = 0 }
+end
+
+local function MaxBin(h)
+    local m = 0
+    for i = 1, 8 do
+        if h[DIR_NAMES[i]] > m then m = h[DIR_NAMES[i]] end
+    end
+    return m
+end
+
 local function posKey(pos)
     return math.floor(pos.x / 128) .. ":" .. math.floor(pos.y / 128)
 end
@@ -277,13 +300,18 @@ function SM.Scan(squad)
     SM.ScanCover(squad)
 
     local heatCfg = CAI.Config.Heatmap
+    local binDecay = heatCfg.HeatDecayRate * elapsed
     for key, h in pairs(sm.heatmap) do
         if h.temp > heatCfg.Baseline then
             h.temp = math.max(heatCfg.Baseline, h.temp - heatCfg.HeatDecayRate * elapsed)
         elseif h.temp < heatCfg.Baseline then
             h.temp = math.min(heatCfg.Baseline, h.temp + heatCfg.SafetyDecayRate * elapsed)
         end
-        if h.temp >= heatCfg.Baseline - 2 and h.temp <= heatCfg.Baseline + 2 then
+        for i = 1, 8 do
+            h[DIR_NAMES[i]] = math.max(0, h[DIR_NAMES[i]] - binDecay)
+        end
+        if h.temp >= heatCfg.Baseline - 2 and h.temp <= heatCfg.Baseline + 2
+           and MaxBin(h) < (heatCfg.DangerBinPrune or 5) then
             sm.heatmap[key] = nil
         end
     end
@@ -304,7 +332,7 @@ local function heatKey(pos)
     return math.floor(pos.x / cellSize) .. ":" .. math.floor(pos.y / cellSize)
 end
 
-function SM.RecordTemp(squad, pos, delta, radius)
+function SM.RecordTemp(squad, pos, delta, radius, threatOrigin)
     if not squad then return end
     local cfg = CAI.Config.Heatmap
     radius = radius or cfg.RadiateRadius
@@ -312,6 +340,7 @@ function SM.RecordTemp(squad, pos, delta, radius)
     local cellR = math.ceil(radius / cellSize)
     local cx, cy = math.floor(pos.x / cellSize), math.floor(pos.y / cellSize)
     local sm = squad.blackboard.spatialMap
+    local hasDir = delta > 0 and threatOrigin ~= nil
     for dx = -cellR, cellR do
         for dy = -cellR, cellR do
             local dist = math.sqrt(dx * dx + dy * dy) * cellSize + cellSize * 0.5
@@ -320,11 +349,20 @@ function SM.RecordTemp(squad, pos, delta, radius)
                 local key = (cx + dx) .. ":" .. (cy + dy)
                 local h = sm.heatmap[key]
                 if not h then
-                    h = { temp = cfg.Baseline, updatedAt = 0, lastDangerAt = 0 }
+                    h = NewHeatCell(cfg.Baseline)
                     sm.heatmap[key] = h
                 end
                 h.temp = math.Clamp(h.temp + delta * falloff, 0, 50)
                 h.updatedAt = CurTime()
+                if hasDir then
+                    local dir = threatOrigin - CellCenter(cx + dx, cy + dy, cellSize)
+                    dir.z = 0
+                    if dir:LengthSqr() >= 1 then
+                        dir:Normalize()
+                        local name = DIR_NAMES[CompassBin(dir)]
+                        h[name] = math.Clamp(h[name] + delta * falloff, 0, 50)
+                    end
+                end
                 if delta > 0 and dist < cellSize * 0.5 then h.lastDangerAt = CurTime() end
             end
         end
@@ -338,6 +376,56 @@ function SM.QueryTemp(squad, pos)
     local h = squad.blackboard.spatialMap.heatmap[key]
     if not h then return CAI.Config.Heatmap.Baseline end
     return h.temp
+end
+
+local BIN_DIR = {
+    N  = Vector(1, 0, 0),
+    NE = Vector(0.7071067811865476, 0.7071067811865476, 0),
+    E  = Vector(0, 1, 0),
+    SE = Vector(-0.7071067811865476, 0.7071067811865476, 0),
+    S  = Vector(-1, 0, 0),
+    SW = Vector(-0.7071067811865476, -0.7071067811865476, 0),
+    W  = Vector(0, -1, 0),
+    NW = Vector(0.7071067811865476, -0.7071067811865476, 0),
+}
+
+function SM.QueryExposed(squad, pos, fromDir)
+    if not squad or not fromDir then return 0 end
+    local cellSize = CAI.Config.Cover.CellSize
+    local key = math.floor(pos.x / cellSize) .. ":" .. math.floor(pos.y / cellSize)
+    local h = squad.blackboard.spatialMap.heatmap[key]
+    if not h then return 0 end
+    local dir = Vector(fromDir); dir.z = 0
+    if dir:LengthSqr() < 1 then return 0 end
+    dir:Normalize()
+    return h[DIR_NAMES[CompassBin(dir)]] / 50
+end
+
+function SM.QuerySafeDir(squad, pos, preferred)
+    if not squad then return preferred or Vector(0, 0, 0) end
+    local cellSize = CAI.Config.Cover.CellSize
+    local key = math.floor(pos.x / cellSize) .. ":" .. math.floor(pos.y / cellSize)
+    local h = squad.blackboard.spatialMap.heatmap[key]
+    if not h then return preferred or Vector(0, 0, 0) end
+    local threat = Vector(0, 0, 0)
+    for i = 1, 8 do
+        local name = DIR_NAMES[i]
+        threat = threat + BIN_DIR[name] * h[name]
+    end
+    local prune = CAI.Config.Heatmap.DangerBinPrune or 5
+    if threat:LengthSqr() < prune * prune then
+        return preferred or Vector(0, 0, 0)
+    end
+    return (-threat):GetNormalized()
+end
+
+function SM.BiasedDir(squad, pos, baseDir)
+    local safeDir = SM.QuerySafeDir(squad, pos, baseDir)
+    if safeDir:LengthSqr() < 1 then return baseDir end
+    local lat = safeDir - baseDir * safeDir:Dot(baseDir)
+    local blended = baseDir + lat * 0.5
+    if blended:LengthSqr() < 0.1 then return baseDir end
+    return blended:GetNormalized()
 end
 
 local coverScanCounters = {}

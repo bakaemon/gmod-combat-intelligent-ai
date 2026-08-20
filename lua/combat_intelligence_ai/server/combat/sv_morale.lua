@@ -111,7 +111,7 @@ CAI.SafeHook("EntityTakeDamage", "CAI_MoraleExplosions", CAI.Prof.Wrap("morale_e
     for npc, data in pairs(CAI.Manager.All()) do
         if IsValid(npc) and npc:GetPos():DistToSqr(pos) < cfg.ExplosionRadius * cfg.ExplosionRadius then
             MO.Add(data, cfg.Explosion, "explosion")
-            CAI.Suppression.Add(data, CAI.Config.Suppression.Explosion)
+            CAI.Suppression.Add(data, CAI.Config.Suppression.Explosion, pos)
             CAI.Memory.AddDanger(data, pos, 300, "explosion")
         end
     end
@@ -137,7 +137,7 @@ CAI.SafeHook("EntityTakeDamage", "CAI_DamageReact", CAI.Prof.Wrap("morale_damage
         data.meleeHits[#data.meleeHits + 1] = CurTime()
     end
 
-    CAI.Suppression.Add(data, 18)
+    CAI.Suppression.Add(data, 18, IsValid(atk) and atk.GetPos and atk:GetPos() or nil)
     if CurTime() - (data.lastMoraleHit or 0) > 0.7 then
         data.lastMoraleHit = CurTime()
         MO.Add(data, -4, "took_damage")

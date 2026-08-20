@@ -194,6 +194,7 @@ function SF.Plan(squad)
                             local moveDist = math.min(CAI.Config.SquadTactics.BoundMoveDistance, dist * 0.4)
                             local lateralDir = (toEnemy * 0.3 + right * side * 0.7):GetNormalized()
                             lateralDir.z = 0
+                            lateralDir = CAI.SpatialMap.BiasedDir(d.squad, d.ent:GetPos(), lateralDir)
                             local dest = d.ent:GetPos() + lateralDir * moveDist
                             local safeDest = CAI.Nav.SafeGround(dest)
                             if not safeDest then

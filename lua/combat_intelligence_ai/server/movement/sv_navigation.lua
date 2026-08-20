@@ -17,6 +17,10 @@ function N.MoveTo(data, pos, mode)
         return true
     end
 
+    if npc.SetEnemy and not IsValid(npc:GetEnemy()) and IsValid(data.combatTarget) then
+        npc:SetEnemy(data.combatTarget)
+    end
+
     npc:SetLastPosition(pos)
     npc:SetSchedule(sched)
     data.moveTarget = pos
@@ -173,7 +177,7 @@ function N.SafeOffset(from, dir, dist)
     local yaw = dir:Angle().y
     for _, off in ipairs({ 0, 45, -45, 90, -90 }) do
         local d = Angle(0, yaw + off, 0):Forward()
-        dest = N.SafeGround(from + d * dist)
+        local dest = N.SafeGround(from + d * dist)
         if dest then return dest end
     end
     return nil

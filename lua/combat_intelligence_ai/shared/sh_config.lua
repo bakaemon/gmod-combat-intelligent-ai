@@ -163,6 +163,7 @@ C.Heatmap = {
     ConeRays = 5,
     ConeCoolRate = 1,
     PatrolRadius = 1200,
+    DangerBinPrune = 5,
 }
 
 C.Memory = {
